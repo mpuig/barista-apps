@@ -1,0 +1,25 @@
+[project]
+name = "barista-app-lift"
+version = "0.1.0a1"
+description = "Session transfer app for Barista: exact when compatible, honest semantic continuation otherwise."
+requires-python = ">=3.10"
+dependencies = ["barista-app-sdk"]
+
+[project.scripts]
+barista-lift = "barista_app_lift.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "jsonschema[format]>=4.20"]
+
+[tool.uv.sources]
+barista-app-sdk = { path = "../../sdks/python", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_lift"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
