@@ -76,3 +76,18 @@ jobs:
       - name: SDK tests (offline, local + cloud-shaped provider)
         working-directory: sdks/python
         run: uv run --extra test pytest -q
+
+  adapters:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        adapter: [pi, claude, codex]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Adapter tests (offline)
+        working-directory: apps/${{ matrix.adapter }}
+        run: uv run --extra test pytest -q

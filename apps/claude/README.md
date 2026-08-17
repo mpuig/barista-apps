@@ -1,4 +1,37 @@
 # apps/claude
 
-Reference adapter package for Claude Code. See
-`openspec/changes/apps-001-portable-agent-apps/specs/agent-adapters/spec.md`.
+The **claude** harness as a portable Barista app: an [App Manifest](manifest.json)
+plus a semantic-transfer adapter that runs against any conformant Host API
+provider.
+
+- **Adapter:** `barista_app_claude` — implements the SDK `Adapter` interface
+  (detect, capabilities, export_semantic, continuation_launch, collect_result).
+- **Manifest:** digest-pinned OCI workload, supported native-version
+  declaration, and model-provider credential **references** (never plaintext).
+- **Spec:** `openspec/changes/apps-001-portable-agent-apps/specs/agent-adapters/spec.md`
+
+## What the adapter does
+
+- **Detect** the harness's native session state for a workspace and report the
+  native version.
+- **Export** a semantic bundle that preserves the native transcript as an
+  **opaque** attachment (bytes + media type) and carries an honest
+  `FidelityReport` — semantic continuation, never a claim of exact memory
+  transfer.
+- **Refuse loudly** (`AdapterCompatibilityError`) when the native version is
+  unsupported, rather than exporting a lossy bundle silently.
+- **Continuation** builds the command to resume the harness from the exported
+  state.
+
+No adapter puts harness-specific fields into the Host API or the manifest
+envelope; harness detail lives in the adapter and in namespaced metadata.
+
+## Tests
+
+```bash
+cd apps/claude && uv run --extra test pytest -q
+```
+
+Fixture-based round trips prove native bytes are preserved verbatim, the bundle
+validates against the semantic-state contract schema (no extra fields), and an
+unsupported native version is refused.
