@@ -8,11 +8,11 @@
 
 ## 2. Provider conformance
 
-- [ ] 2.1 Build the black-box conformance runner with provider endpoint/credential configuration and versioned reports.
-- [ ] 2.2 Add core-profile cases for discovery, manifest rejection, ensure/lifecycle, idempotency, exec/attach, events/cursors, artifacts, errors, and cleanup.
+- [x] 2.1 Build the black-box conformance runner with provider endpoint/credential configuration and versioned reports.
+- [x] 2.2 Add core-profile cases for discovery, manifest rejection, ensure/lifecycle, idempotency, exec/attach, events/cursors, artifacts, errors, and cleanup.
 - [ ] 2.3 Add independent profiles for exact snapshot, fork, capsule, delegated grants, Story publication, and branch evaluation.
-- [ ] 2.4 Add a mandatory standalone harness that blocks Cloud DNS/endpoints, removes Cloud credentials, and detects proprietary imports or network attempts.
-- [ ] 2.5 Publish machine-readable conformance results whose skips cannot satisfy an advertised profile.
+- [x] 2.4 Add a mandatory standalone harness that blocks Cloud DNS/endpoints, removes Cloud credentials, and detects proprietary imports or network attempts.
+- [x] 2.5 Publish machine-readable conformance results whose skips cannot satisfy an advertised profile.
 
 ## 3. Local Host API provider
 
