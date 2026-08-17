@@ -63,9 +63,9 @@
 
 ## 9. Documentation, security, and release
 
-- [ ] 9.1 Document the kernel/provider/app boundary, third-party provider guide, manifest authoring, capability profiles, and local standalone installation.
-- [ ] 9.2 Publish a threat model covering untrusted apps, delegated grants, exact-memory secrets, malicious capsules, stories, adapters, and local remote-binding hazards.
-- [ ] 9.3 Add supply-chain checks for pinned images, schema/package signatures, generated-client drift, dependency audit, and app image provenance.
-- [ ] 9.4 Run `openspec validate apps-001-portable-agent-apps --strict`, schema/golden/unit tests, and every advertised provider profile.
-- [ ] 9.5 Run the full mandatory conformance suite and Pi + Factory + semantic Lift + Story acceptance flow with Barista Cloud DNS blocked, no Cloud credential, and no proprietary package available.
+- [x] 9.1 Document the kernel/provider/app boundary, third-party provider guide, manifest authoring, capability profiles, and local standalone installation.
+- [x] 9.2 Publish a threat model covering untrusted apps, delegated grants, exact-memory secrets, malicious capsules, stories, adapters, and local remote-binding hazards.
+- [x] 9.3 Add supply-chain checks for pinned images, schema/package signatures, generated-client drift, dependency audit, and app image provenance.
+- [x] 9.4 Run `openspec validate apps-001-portable-agent-apps --strict`, schema/golden/unit tests, and every advertised provider profile.
+- [x] 9.5 Run the full mandatory conformance suite and Pi + Factory + semantic Lift + Story acceptance flow with Barista Cloud DNS blocked, no Cloud credential, and no proprietary package available.
 
