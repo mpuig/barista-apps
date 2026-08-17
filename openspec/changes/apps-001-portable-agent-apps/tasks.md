@@ -56,10 +56,10 @@
 
 ## 8. Session Story app
 
-- [ ] 8.1 Implement selection and canonical assembly of events, decisions, commands, diffs, commits, receipts, evaluations, and explicit artifacts.
-- [ ] 8.2 Implement versioned deterministic redaction, high-confidence secret blocking, unknown-media failure, and removal-category reporting.
-- [ ] 8.3 Ensure story bundles contain no capsule objects, writable filesystem, bearer grants, or executable permission and verify content provenance/signatures.
-- [ ] 8.4 Add a standalone static story viewer/export path and golden tests for determinism, redaction, pseudonymization, and non-executability.
+- [x] 8.1 Implement selection and canonical assembly of events, decisions, commands, diffs, commits, receipts, evaluations, and explicit artifacts.
+- [x] 8.2 Implement versioned deterministic redaction, high-confidence secret blocking, unknown-media failure, and removal-category reporting.
+- [x] 8.3 Ensure story bundles contain no capsule objects, writable filesystem, bearer grants, or executable permission and verify content provenance/signatures.
+- [x] 8.4 Add a standalone static story viewer/export path and golden tests for determinism, redaction, pseudonymization, and non-executability.
 
 ## 9. Documentation, security, and release
 

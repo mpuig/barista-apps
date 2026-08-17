@@ -1,0 +1,29 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "story",
+  "version": "0.1.0",
+  "description": "Deterministic, redacted, non-executable Session Story generation and publication.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-story:0.1.0",
+    "digest": "sha256:0eec1738990f78b334f29a090b3826aaa4e74fbe6533f4190e2afa50298ebfe4",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/barista-story"],
+    "working_dir": "/work",
+    "readiness": { "type": "none" }
+  },
+  "capabilities": {
+    "optional": [
+      { "capability": "story.publish" }
+    ]
+  },
+  "permissions": {
+    "actions": ["session.events", "artifact.read", "story.publish"],
+    "artifacts": { "read": true },
+    "publication": ["story"]
+  },
+  "metadata": {
+    "sh.barista.story": {
+      "redaction_policy": "default/1"
+    }
+  }
+}
