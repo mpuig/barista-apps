@@ -1,0 +1,29 @@
+schema: spec-driven
+
+context: |
+  Project: barista-apps — the open-source userland for Barista. It owns the
+  vendor-neutral App Manifest and Host API, provider conformance tests, a local
+  single-user provider, SDKs, and first-party reference apps. Apps must work
+  without Barista Cloud and must not import or depend on proprietary code.
+
+  barista.sh is the execution kernel and exposes its schema-first Node Agent
+  contract. Barista Cloud is one managed Host API provider. This repository is
+  the portability seam between them: an app targets the Host API and discovers
+  capabilities rather than targeting either provider's internal API.
+
+  Change IDs use `apps-NNN-<slug>`, monotonically from apps-001. Apps are OCI
+  artifacts pinned by digest; manifests, capsule envelopes, and Host API schemas
+  are open, versioned contracts.
+
+rules:
+  proposal:
+    - "Cover one coherent, end-to-end portable-app outcome."
+    - "State how the proposal remains usable with Barista Cloud absent."
+  specs:
+    - "Requirements use SHALL and describe provider-neutral observable behavior."
+    - "An app requirement must be testable against both the local provider and the Cloud provider unless explicitly capability-gated."
+  design:
+    - "Keep agent-specific behavior in adapters; never require the Host API to understand Pi, Claude, Codex, or another harness."
+    - "Name security boundaries for credentials, snapshots, public knowledge, and executable capsules."
+  tasks:
+    - "Finite, ordered, independently checkable; final tasks run the provider conformance suite with Cloud disabled."

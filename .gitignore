@@ -1,0 +1,35 @@
+# macOS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Agent harness local state
+.claude/settings.local.json
+.pi/local/
+.factory/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# Node (if a TypeScript SDK/adapter lands later)
+node_modules/
+
+# Build/docs artifacts
+site/
+build/
+
+# Scratch
+work/
+sources/
+
+# Env
+.env
+.env.*
+!.env.example

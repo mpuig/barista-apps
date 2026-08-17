@@ -1,0 +1,12 @@
+Barista Apps
+Copyright 2026 Marc Puig
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Barista Apps is the open userland for Barista: the App Manifest, the Host API,
+provider conformance tests, a local single-user provider, SDKs, and first-party
+reference apps (Pi, Claude Code, Codex, Factory, Lift, Session Story).
+
+It depends on released `barista.sh` (github.com/mpuig/barista.sh) contracts and
+targets the Host API defined in this repository; it must not import or depend
+on Barista Cloud or any other proprietary component.
