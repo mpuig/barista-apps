@@ -25,10 +25,10 @@
 
 ## 4. SDK and adapter framework
 
-- [ ] 4.1 Generate/build the first Python SDK with endpoint selection, auth source, capability negotiation, typed errors, idempotency, operation waiting, streams, and attach helpers.
-- [ ] 4.2 Add the provider-neutral adapter interface for detect, semantic export, continuation launch, capability/fidelity report, and result collection.
-- [ ] 4.3 Add common sensitive-data handling so manifests, logs, stories, and semantic bundles accept references/redactions but reject raw declared secrets.
-- [ ] 4.4 Test the same SDK/app code against local and Cloud conformance endpoints using configuration changes only.
+- [x] 4.1 Generate/build the first Python SDK with endpoint selection, auth source, capability negotiation, typed errors, idempotency, operation waiting, streams, and attach helpers.
+- [x] 4.2 Add the provider-neutral adapter interface for detect, semantic export, continuation launch, capability/fidelity report, and result collection.
+- [x] 4.3 Add common sensitive-data handling so manifests, logs, stories, and semantic bundles accept references/redactions but reject raw declared secrets.
+- [x] 4.4 Test the same SDK/app code against local and Cloud conformance endpoints using configuration changes only.
 
 ## 5. Reference agent adapters
 
