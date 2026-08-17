@@ -1,0 +1,40 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "lift",
+  "version": "0.1.0",
+  "description": "Move an agent session between hosts: exact when compatible, honest semantic continuation otherwise.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-lift:0.1.0",
+    "digest": "sha256:048eaa6797bd308edc37a799e3bc3653b7e129834715ae36232d84d393b5b19e",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/barista-lift"],
+    "working_dir": "/work",
+    "readiness": { "type": "none" }
+  },
+  "capabilities": {
+    "optional": [
+      { "capability": "session.snapshot.exact" },
+      { "capability": "capsule.export" },
+      { "capability": "capsule.import" },
+      { "capability": "session.fork" }
+    ]
+  },
+  "permissions": {
+    "actions": [
+      "session.create",
+      "session.get",
+      "session.exec",
+      "session.pause",
+      "capsule.export",
+      "capsule.import",
+      "artifact.read",
+      "artifact.write"
+    ],
+    "artifacts": { "read": true, "write": true }
+  },
+  "metadata": {
+    "sh.barista.lift": {
+      "modes": ["exact", "semantic", "auto"]
+    }
+  }
+}

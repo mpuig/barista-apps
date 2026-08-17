@@ -48,11 +48,11 @@
 
 ## 7. Lift app
 
-- [ ] 7.1 Implement source classification and an explicit `exact`, `semantic`, or `auto-with-confirmation` mode with no silent semantic fallback from exact.
+- [x] 7.1 Implement source classification and an explicit `exact`, `semantic`, or `auto-with-confirmation` mode with no silent semantic fallback from exact.
 - [ ] 7.2 Implement exact capsule export/import/compatibility/target acceptance while preserving the source until acceptance.
-- [ ] 7.3 Implement semantic export/import through adapters with workspace, VCS, transcript, skills, tools, environment, continuation prompt, and missing-component inventory.
-- [ ] 7.4 Emit transfer receipts and resumable failed-transfer state without secret values.
-- [ ] 7.5 Test exact compatible transfer, exact incompatibility, native macOS semantic transfer, interrupted upload, target rejection, and source preservation.
+- [x] 7.3 Implement semantic export/import through adapters with workspace, VCS, transcript, skills, tools, environment, continuation prompt, and missing-component inventory.
+- [x] 7.4 Emit transfer receipts and resumable failed-transfer state without secret values.
+- [x] 7.5 Test exact compatible transfer, exact incompatibility, native macOS semantic transfer, interrupted upload, target rejection, and source preservation.
 
 ## 8. Session Story app
 
