@@ -90,6 +90,9 @@ class HostAPIClient:
             f"{BASE}/sessions/{session_id}/exec", json=body, headers=self._idem(key)
         )
 
+    def attach(self, session_id: str, mode: str = "raw") -> httpx.Response:
+        return self._client.get(f"{BASE}/sessions/{session_id}/attach", params={"mode": mode})
+
     # -- artifacts -------------------------------------------------------- #
     def register_artifact(self, session_id: str, body: dict, key: Optional[str] = None) -> httpx.Response:
         return self._client.post(

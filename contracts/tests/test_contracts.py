@@ -170,3 +170,13 @@ def test_manifest_content_id_is_stable_golden():
     # Recompute from a re-parsed copy to prove determinism.
     again = json.loads(json.dumps(manifest))
     assert content_id(again) == expected
+
+
+def test_secret_ref_must_be_a_scheme_reference_not_plaintext():
+    """A secret ref must be a scheme:// reference; a raw credential is rejected."""
+    v = _manifest_validator()
+    manifest = load_json(MANIFEST_SCHEMA.parent / "examples" / "minimal.json")
+    manifest["permissions"] = {"secrets": [{"name": "K", "ref": "secret://vault/k"}]}
+    assert not list(v.iter_errors(manifest)), "a secret:// reference must validate"
+    manifest["permissions"] = {"secrets": [{"name": "K", "ref": "sk-live-abc123def456"}]}
+    assert list(v.iter_errors(manifest)), "a raw credential in ref must be rejected"

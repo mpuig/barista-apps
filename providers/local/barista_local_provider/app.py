@@ -16,6 +16,8 @@ from typing import Optional
 
 from jsonschema import Draft202012Validator
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -53,13 +55,19 @@ class LocalProvider:
         self._caps = host_api_capabilities(node.node_info())
 
     # -- auth ------------------------------------------------------------- #
-    def _authorized(self, request: Request) -> bool:
+    def authorized(self, request: Request) -> bool:
         if not self.token:
             return True  # loopback/unix-socket single-user default
         return request.headers.get("authorization") == f"Bearer {self.token}"
 
     def _idem(self, request: Request) -> Optional[str]:
         return request.headers.get("Idempotency-Key")
+
+    def _replay_operation(self, idem: Optional[str], kind: str) -> Optional[dict]:
+        if not idem:
+            return None
+        op_id = self.store.idempotent_lookup(idem, kind)
+        return self.store.get_operation(op_id) if op_id else None
 
     # -- routes ----------------------------------------------------------- #
     async def discovery(self, request: Request) -> Response:
@@ -75,8 +83,6 @@ class LocalProvider:
         )
 
     async def install_app(self, request: Request) -> Response:
-        if not self._authorized(request):
-            return errors.error(401, "authentication", "unauthorized", "missing or bad token")
         try:
             manifest = json.loads(await request.body())
         except json.JSONDecodeError:
@@ -86,6 +92,16 @@ class LocalProvider:
             first = problems[0]
             loc = "/".join(str(p) for p in first.path) or "<root>"
             return errors.invalid_request(f"manifest invalid at {loc}: {first.message}", "manifest.invalid")
+        # Reject before any side effect when a required capability is unmet
+        # (Host API installApp contract).
+        required = [
+            c["capability"] for c in manifest.get("capabilities", {}).get("required", [])
+        ]
+        missing = [c for c in required if c not in self._caps]
+        if missing:
+            return errors.capability_unsupported(
+                f"app requires capabilities this provider does not advertise: {', '.join(missing)}"
+            )
         granted = [c for c in self._advertised_for(manifest)]
         rec = self.store.install_app(manifest, granted)
         return JSONResponse(
@@ -106,8 +122,6 @@ class LocalProvider:
         return [c for c in self._caps if c in wanted]
 
     async def ensure_session(self, request: Request) -> Response:
-        if not self._authorized(request):
-            return errors.error(401, "authentication", "unauthorized", "missing or bad token")
         body = json.loads(await request.body())
         app_name = body.get("app")
         if not app_name:
@@ -160,10 +174,12 @@ class LocalProvider:
         session = self.store.get_session(sid)
         if not session:
             return errors.not_found("no such session")
-        # Refresh state from the node without leaking any node internals.
+        # Refresh state from the node without leaking any node internals. Only
+        # write (a serialized SQLite commit) when the state actually changed, so
+        # a status poll stays a read.
         inst_id = self.store.node_instance_id(sid)
         inst = self.node.get(inst_id) if inst_id else None
-        if inst:
+        if inst and inst.state != session["state"]:
             self.store.set_session_state(sid, inst.state)
             session["state"] = inst.state
         return JSONResponse(session)
@@ -174,6 +190,10 @@ class LocalProvider:
 
     async def delete_session(self, request: Request) -> Response:
         sid = request.path_params["sessionId"]
+        idem = self._idem(request)
+        replay = self._replay_operation(idem, "delete")
+        if replay:
+            return JSONResponse(replay, status_code=202)
         session = self.store.get_session(sid)
         if not session:
             return errors.not_found("no such session")
@@ -185,10 +205,15 @@ class LocalProvider:
                 pass
         op = self.store.create_operation("delete", sid, done=True)
         self.store.delete_session(sid)
+        self.store.idempotent_record(idem, "delete", op["id"])
         return JSONResponse(op, status_code=202)
 
     async def _lifecycle(self, request: Request, verb: str) -> Response:
         sid = request.path_params["sessionId"]
+        idem = self._idem(request)
+        replay = self._replay_operation(idem, verb)
+        if replay:
+            return JSONResponse(replay, status_code=202)
         if "session.pause_resume" not in self._caps:
             return errors.capability_unsupported("session.pause_resume is not supported by this provider")
         inst_id = self.store.node_instance_id(sid)
@@ -202,6 +227,7 @@ class LocalProvider:
         self.store.set_session_state(sid, new_state)
         op = self.store.create_operation(verb, sid, done=True)
         self.store.append_event(sid, "session.state_changed", {"state": new_state}, op["id"])
+        self.store.idempotent_record(idem, verb, op["id"])
         return JSONResponse(op, status_code=202)
 
     async def pause(self, request: Request) -> Response:
@@ -215,10 +241,20 @@ class LocalProvider:
         inst_id = self.store.node_instance_id(sid)
         if not inst_id:
             return errors.not_found("no such session")
+        idem = self._idem(request)
+        replay = self._replay_operation(idem, "exec")
+        if replay:
+            return JSONResponse(
+                {"operation_id": replay["id"], "event_cursor": replay.get("last_event_cursor", "")}
+            )
         body = json.loads(await request.body())
         command = body.get("command")
         if not command:
             return errors.invalid_request("field 'command' is required")
+        # Capture the resume point BEFORE the exec events: cursors are exclusive
+        # (read_events returns seq > cursor), so handing back the newest existing
+        # cursor makes the caller's next read start at this command's stdout.
+        event_cursor = self.store.current_max_cursor(sid)
         try:
             result = self.node.exec(
                 inst_id, command, env=body.get("env"), workdir=body.get("working_dir"),
@@ -226,7 +262,7 @@ class LocalProvider:
             )
         except NodeNotFound:
             return errors.not_found("no such session")
-        first_cursor = self.store.append_event(
+        self.store.append_event(
             sid, "exec.stdout", {"chunk": base64.b64encode(result.stdout).decode()}
         )
         if result.stderr:
@@ -234,21 +270,30 @@ class LocalProvider:
                 sid, "exec.stderr", {"chunk": base64.b64encode(result.stderr).decode()}
             )
         op = self.store.create_operation(
-            "exec", sid, done=True, result={"exit_code": result.exit_code}, last_cursor=first_cursor
+            "exec", sid, done=True, result={"exit_code": result.exit_code}, last_cursor=event_cursor
         )
         self.store.append_event(sid, "exec.exit", {"exit_code": result.exit_code}, op["id"])
-        return JSONResponse({"operation_id": op["id"], "event_cursor": first_cursor})
+        self.store.idempotent_record(idem, "exec", op["id"])
+        return JSONResponse({"operation_id": op["id"], "event_cursor": event_cursor})
 
     async def register_artifact(self, request: Request) -> Response:
         sid = request.path_params["sessionId"]
         if not self.store.get_session(sid):
             return errors.not_found("no such session")
+        idem = self._idem(request)
+        if idem:
+            existing = self.store.idempotent_lookup(idem, "artifact")
+            if existing:
+                art = self.store.get_artifact(existing)
+                if art:
+                    return JSONResponse(art, status_code=201)
         body = json.loads(await request.body())
         for field in ("name", "digest", "size_bytes", "media_type"):
             if field not in body:
                 return errors.invalid_request(f"field '{field}' is required")
         art = self.store.register_artifact(sid, body)
         self.store.append_event(sid, "artifact.registered", {"artifact_id": art["id"]})
+        self.store.idempotent_record(idem, "artifact", art["id"])
         return JSONResponse(art, status_code=201)
 
     async def list_artifacts(self, request: Request) -> Response:
@@ -261,9 +306,25 @@ class LocalProvider:
             return errors.not_found("no such operation")
         return JSONResponse(op)
 
+    async def attach(self, request: Request) -> Response:
+        # Attach is part of the core profile; this backend has no PTY/byte stream
+        # to upgrade to, so it returns the contract's structured 426 rather than
+        # Starlette's plain 404. A backend that can attach upgrades to a WebSocket.
+        sid = request.path_params["sessionId"]
+        if not self.store.get_session(sid):
+            return errors.not_found("no such session")
+        return errors.error(
+            426, "capability", "attach.upgrade_required",
+            "this provider's node backend does not support interactive attach",
+        )
+
     async def events(self, request: Request) -> Response:
         sid = request.path_params["sessionId"]
         cursor = request.query_params.get("cursor") or request.headers.get("Last-Event-ID")
+        if cursor is not None and not cursor.isdigit():
+            return errors.invalid_request(
+                f"cursor must be a numeric resume point, got {cursor!r}", "cursor.invalid"
+            )
         evs = self.store.read_events(sid, after_cursor=cursor, limit=100)
         lines = []
         for ev in evs:
@@ -287,11 +348,35 @@ def build_app(node: NodeClient, store: Store, *, token: Optional[str] = None) ->
         Route(f"{base}/sessions/{{sessionId}}/pause", p.pause, methods=["POST"]),
         Route(f"{base}/sessions/{{sessionId}}/resume", p.resume, methods=["POST"]),
         Route(f"{base}/sessions/{{sessionId}}/exec", p.exec_session, methods=["POST"]),
+        Route(f"{base}/sessions/{{sessionId}}/attach", p.attach, methods=["GET"]),
         Route(f"{base}/sessions/{{sessionId}}/artifacts", p.register_artifact, methods=["POST"]),
         Route(f"{base}/sessions/{{sessionId}}/artifacts", p.list_artifacts, methods=["GET"]),
         Route(f"{base}/sessions/{{sessionId}}/events", p.events, methods=["GET"]),
         Route(f"{base}/operations/{{operationId}}", p.get_operation, methods=["GET"]),
     ]
-    app = Starlette(routes=routes)
+    middleware = [Middleware(_AuthMiddleware, provider=p)]
+    app = Starlette(routes=routes, middleware=middleware)
     app.state.provider = p
     return app
+
+
+class _AuthMiddleware(BaseHTTPMiddleware):
+    """Enforce the bearer token on every Host API route (except discovery, the
+    pre-auth negotiation) when a token is configured. Centralized so no handler
+    can forget it. With no token (the loopback/Unix-socket default) it is a
+    no-op."""
+
+    def __init__(self, app, provider: "LocalProvider"):
+        super().__init__(app)
+        self.provider = provider
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if (
+            self.provider.token
+            and path.startswith("/v1alpha1")
+            and path != "/v1alpha1/discovery"
+            and not self.provider.authorized(request)
+        ):
+            return errors.error(401, "authentication", "unauthorized", "missing or bad token")
+        return await call_next(request)

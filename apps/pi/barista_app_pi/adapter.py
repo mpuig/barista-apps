@@ -1,33 +1,20 @@
 """Pi harness adapter.
 
-Detects Pi native session state, exports it as an opaque semantic bundle with an
-honest fidelity report, and builds a continuation launch. Pi-native transcript
-bytes are preserved verbatim; no provider-specific fields are introduced.
-
 Pi stores one JSONL session per workspace under
 ``<home>/sessions/--<cwd-with-slashes-as-dashes>--/<timestamp>_<uuid>.jsonl``.
-The first line is a ``{"type":"session","version":N,"id":...,"cwd":...}`` record.
+The first line is a ``{"type":"session","version":N,"id":...}`` record. All the
+shared logic (newest-by-mtime selection, opaque export, fidelity, loud version
+refusal, continuation) lives in the SDK base adapter; this declares only what is
+Pi-specific.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import time
 from pathlib import Path
 from typing import Optional
 
-from barista_app_sdk.adapters import (
-    AdapterCapabilities,
-    AdapterCompatibilityError,
-    AdapterResult,
-    Attachment,
-    DetectResult,
-    FidelityReport,
-    LaunchSpec,
-    SemanticBundle,
-)
-from barista_app_sdk.sensitive import assert_no_secret_values
+from barista_app_sdk.adapters import JsonlSessionAdapter
 
 ADAPTER_NAME = "sh.barista.adapter.pi"
 NATIVE_MEDIA_TYPE = "application/vnd.pi.session+jsonl"
@@ -42,114 +29,34 @@ def _encode_cwd(workspace: str) -> str:
     return "--" + workspace.strip("/").replace("/", "-") + "--"
 
 
-class PiAdapter:
+class PiAdapter(JsonlSessionAdapter):
     name = ADAPTER_NAME
+    native_media_type = NATIVE_MEDIA_TYPE
 
     def __init__(self, home: Optional[Path] = None):
-        self.home = Path(home) if home else _default_home()
+        super().__init__(home if home is not None else _default_home())
 
-    # -- discovery -------------------------------------------------------- #
-    def capabilities(self) -> AdapterCapabilities:
-        return AdapterCapabilities(
-            name=self.name,
-            supported_versions=[str(v) for v in SUPPORTED_SESSION_VERSIONS],
-            semantic_export=True,
-            continuation=True,
-            native_media_types=[NATIVE_MEDIA_TYPE],
-            auth_references=["secret://model-provider/api-key"],
-            limitations=[
-                "Semantic continuation replays a transcript; it is not exact process-memory transfer.",
-            ],
-        )
-
-    def _session_file(self, workspace: str) -> Optional[Path]:
+    def _candidate_files(self, workspace: str) -> list[Path]:
         session_dir = self.home / "sessions" / _encode_cwd(workspace)
-        if not session_dir.is_dir():
-            return None
-        files = sorted(session_dir.glob("*.jsonl"))
-        return files[-1] if files else None
+        return list(session_dir.glob("*.jsonl")) if session_dir.is_dir() else []
 
-    def _meta(self, session_file: Path) -> dict:
-        with session_file.open() as fh:
-            first = fh.readline()
-        return json.loads(first)
+    def _version(self, meta: dict):
+        return meta.get("version")
 
-    def detect(self, workspace: str) -> DetectResult:
-        session_file = self._session_file(workspace)
-        if not session_file:
-            return DetectResult(detected=False, reason="no Pi session for this workspace")
-        meta = self._meta(session_file)
-        version = meta.get("version")
-        supported = version in SUPPORTED_SESSION_VERSIONS
-        return DetectResult(
-            detected=True,
-            native_version=str(version),
-            supported=supported,
-            reason="" if supported else f"unsupported Pi session version {version}",
-        )
+    def _supported(self, version) -> bool:
+        return version in SUPPORTED_SESSION_VERSIONS
 
-    # -- export ----------------------------------------------------------- #
-    def export_semantic(self, workspace: str) -> SemanticBundle:
-        session_file = self._session_file(workspace)
-        if not session_file:
-            raise AdapterCompatibilityError("no Pi session found for this workspace")
-        meta = self._meta(session_file)
-        version = meta.get("version")
-        if version not in SUPPORTED_SESSION_VERSIONS:
-            raise AdapterCompatibilityError(
-                f"Pi session version {version} is not supported by this adapter "
-                f"(supported: {list(SUPPORTED_SESSION_VERSIONS)})"
-            )
+    def _session_id(self, meta: dict) -> Optional[str]:
+        return meta.get("id")
 
-        native_bytes = session_file.read_bytes()
-        attachment = Attachment(
-            name=session_file.name, media_type=NATIVE_MEDIA_TYPE, data=native_bytes
-        )
+    def _continuation_command(self, session_id: Optional[str]) -> list[str]:
+        return ["pi", "--resume", session_id] if session_id else ["pi"]
 
-        has_vcs = (Path(workspace) / ".git").exists() if workspace else False
-        inventory: dict = {
-            "workspace": {
-                "name": os.path.basename(workspace.rstrip("/")) or "workspace",
-                "media_type": "text/x-workspace-path",
-                "digest": "sha256:" + __import__("hashlib").sha256(workspace.encode()).hexdigest(),
-                "size_bytes": len(workspace.encode()),
-            },
-            "transcript": attachment.to_manifest_entry(),
-            "continuation_prompt": "Continue the Pi session from the exported transcript.",
-        }
-        # Never let a declared secret value ride along in the (non-opaque) inventory.
-        assert_no_secret_values(inventory, list(os.environ.get("MODEL_API_KEY", "").split()))
+    def _supported_versions(self) -> list[str]:
+        return [str(v) for v in SUPPORTED_SESSION_VERSIONS]
 
-        missing = [] if has_vcs else ["vcs"]
-        missing += ["skills", "tools", "environment"]
-        return SemanticBundle(
-            adapter=self.name,
-            created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            fidelity=FidelityReport(
-                level="high",
-                notes="Transcript-based semantic continuation; not exact memory transfer.",
-                missing=missing,
-            ),
-            inventory=inventory,
-            native=[attachment],
-        )
+    def _auth_references(self) -> list[str]:
+        return ["secret://model-provider/api-key"]
 
-    # -- continuation ----------------------------------------------------- #
-    def continuation_launch(self, bundle: SemanticBundle) -> LaunchSpec:
-        session_id = self._session_id_from(bundle)
-        cmd = ["pi", "--resume", session_id] if session_id else ["pi"]
-        return LaunchSpec(command=cmd, working_dir="/work")
-
-    def _session_id_from(self, bundle: SemanticBundle) -> Optional[str]:
-        if not bundle.native:
-            return None
-        first_line = bundle.native[0].data.split(b"\n", 1)[0]
-        try:
-            return json.loads(first_line).get("id")
-        except json.JSONDecodeError:
-            return None
-
-    def collect_result(self, workspace: str) -> AdapterResult:
-        session_file = self._session_file(workspace)
-        summary = f"pi session {self._meta(session_file).get('id')}" if session_file else "no pi session"
-        return AdapterResult(exit_code=0, artifacts=[], summary=summary)
+    def _secret_env_values(self) -> list[str]:
+        return list(os.environ.get("MODEL_API_KEY", "").split())

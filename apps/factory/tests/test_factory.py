@@ -195,3 +195,40 @@ def test_manifest_and_mission_schema_are_valid(tmp_path):
     # A worker cannot inherit the coordinator's create authority via the manifest
     # either: child_sessions bounds fan-out.
     assert manifest["permissions"]["child_sessions"]["max_concurrent"] >= 1
+
+
+def test_recovered_running_task_reuses_attempt_no_duplicate_worker(tmp_path):
+    """A task persisted as 'running' (mid-flight crash) must re-ensure the SAME
+    worker on recovery, not bump the attempt and orphan a duplicate (finding 8).
+    """
+    from barista_local_provider import create_local_app
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _Server(app, port):
+            with BaristaClient(Config(endpoint=f"http://127.0.0.1:{port}")) as client:
+                _install_worker_app(client)
+                mission = _mission(tmp_path, n=1)
+                coord = Coordinator(client, mission, tmp_path / "state.json")
+                coord._ensure_coordinator_session()
+
+                task = mission.tasks[0]
+                # Simulate a crash after the first attempt was accepted and saved.
+                ts = coord.state.tasks[task.id]
+                ts.state, ts.attempts, ts.worker = "running", 1, f"{mission.name}-{task.id}"
+                client.ensure_session(
+                    mission.app, name=ts.worker,
+                    idempotency_key=f"{mission.name}:{task.id}:attempt-1",
+                )
+                coord.state.save()
+
+                coord.run_task(task)
+
+                assert ts.attempts == 1, "recovery must not start a new attempt"
+                assert ts.state == "ok"
+                # The one worker was reused and reaped — no orphan left behind.
+                remaining = [s for s in client.list_sessions() if s.name == ts.worker]
+                assert remaining == [], f"a duplicate worker was orphaned: {remaining}"
+    finally:
+        store.close(); node.close()

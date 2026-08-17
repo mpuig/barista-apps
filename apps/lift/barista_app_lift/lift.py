@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from barista_app_sdk import BaristaClient
 from barista_app_sdk.adapters import Adapter
-from barista_app_sdk.sensitive import assert_no_secret_values
+from barista_app_sdk.sensitive import assert_no_high_confidence_secrets
 
 from .capsule import Capsule, CapsuleClient, CapsuleError, CapsuleIncompatible
 from .receipt import Classification, SourceRef, TransferReceipt
@@ -55,7 +55,12 @@ class Lift:
         reason = ""
         if not source.managed or not source.session_id:
             reason = "source is not a Barista-managed session; exact transfer is impossible"
-        elif self.capsule is None and not all(self.target_client.supports(c) for c in EXACT_CAPS):
+        elif self.capsule is None:
+            # Exact mode moves capsule bytes; without a capsule client there is
+            # no mechanism, regardless of what the target advertises. (Fixes the
+            # crash where classify claimed exact but _exact asserted a client.)
+            reason = "no capsule transfer client is configured for exact mode"
+        elif not all(self.target_client.supports(c) for c in EXACT_CAPS):
             reason = "target does not advertise exact capsule transfer"
         else:
             exact = True
@@ -160,8 +165,11 @@ class Lift:
         )
         bundle = self.adapter.export_semantic(source.workspace)  # type: ignore[arg-type]
         doc = bundle.to_document()
-        # A receipt must carry no secret values.
-        assert_no_secret_values(doc, [])
+        # A receipt/bundle must carry no secret values. We do not have the
+        # adapter's declared secret values here, so gate on high-confidence
+        # secret shapes and fail closed (the bundle's inventory was already
+        # value-checked at export time by the adapter).
+        assert_no_high_confidence_secrets(doc)
         caps = self.adapter.capabilities()
         receipt.adapter_version = ",".join(caps.supported_versions)
         receipt.transferred = [k for k in bundle.inventory.keys()]

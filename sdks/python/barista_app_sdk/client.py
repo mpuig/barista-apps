@@ -223,8 +223,16 @@ class BaristaClient:
         resp = self._request("GET", f"{BASE}/operations/{operation_id}", expected=(200,))
         return Operation.parse(resp.json())
 
-    def wait_operation(self, operation_id: str, *, timeout: float = 30.0, poll: float = 0.05) -> Operation:
+    def wait_operation(
+        self,
+        operation_id: str,
+        *,
+        timeout: float = 30.0,
+        poll: float = 0.05,
+        max_poll: float = 2.0,
+    ) -> Operation:
         deadline = time.time() + timeout
+        interval = poll
         while True:
             op = self.get_operation(operation_id)
             if op.done:
@@ -235,7 +243,11 @@ class BaristaClient:
                 raise errors.UnavailableError(
                     f"operation {operation_id} did not complete in {timeout}s", code="operation.timeout"
                 )
-            time.sleep(poll)
+            time.sleep(min(interval, max(0.0, deadline - time.time())))
+            # Exponential backoff capped at max_poll: a fast op still resolves in
+            # one or two polls, but a long-running one stops hammering the gateway
+            # (a 50ms fixed poll is ~20 req/s per in-flight operation).
+            interval = min(interval * 2, max_poll)
 
     # -- artifacts -------------------------------------------------------- #
     def register_artifact(

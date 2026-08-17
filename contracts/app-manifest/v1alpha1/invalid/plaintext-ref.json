@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "leaky-ref-app",
+  "version": "0.1.0",
+  "workload": {
+    "image": "example/app",
+    "digest": "sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    "architectures": ["aarch64"],
+    "entrypoint": ["/app/run"],
+    "readiness": { "type": "none" }
+  },
+  "permissions": {
+    "secrets": [
+      { "name": "API_KEY", "ref": "sk-live-abc123def456ghi789" }
+    ]
+  }
+}

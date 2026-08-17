@@ -10,10 +10,14 @@ capability.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
+
+# One canonical serialization for the whole ecosystem lives in the SDK; re-export
+# it so a story id, a factory receipt digest, and any other content id are
+# computed byte-for-byte identically.
+from barista_app_sdk.content import canonical_bytes, content_id  # noqa: F401
 
 from . import redaction
 
@@ -21,14 +25,6 @@ SCHEMA_VERSION = "v1alpha1"
 RECORD_TYPES = {
     "event", "decision", "command", "diff", "commit", "receipt", "evaluation", "artifact_ref",
 }
-
-
-def canonical_bytes(value: Any) -> bytes:
-    return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
-
-
-def content_id(value: Any) -> str:
-    return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
 def record_digest(record: dict) -> str:

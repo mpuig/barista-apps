@@ -232,3 +232,46 @@ def test_semantic_bundle_validates_against_contract_schema():
         native=[Attachment(name="s", media_type="application/x-pi", data=b"abcd")],
     )
     Draft202012Validator(schema).validate(bundle.to_document())
+
+
+def test_redact_payload_matches_secrets_with_quotes_and_non_ascii():
+    from barista_app_sdk.sensitive import redact_payload
+
+    secret = 'pa"ss\\wörd-1234'
+    out = redact_payload({"log": f"used {secret} to auth", "nested": [secret]}, [secret])
+    assert secret not in json.dumps(out, ensure_ascii=False)
+    assert "«redacted»" in out["log"]
+    assert out["nested"][0] == "«redacted»"
+
+
+def test_to_document_rejects_unknown_inventory_component():
+    from barista_app_sdk.adapters import FidelityReport, SemanticBundle
+
+    bundle = SemanticBundle(
+        adapter="x", created_at="2026-08-17T00:00:00Z",
+        fidelity=FidelityReport(level="high"),
+        inventory={"not_a_real_component": {"x": 1}},
+    )
+    with pytest.raises(ValueError):
+        bundle.to_document()
+
+
+def test_wait_operation_backs_off(monkeypatch):
+    # The poll interval grows (no fixed 50ms hammering) — assert the sleep values
+    # increase across polls until the op completes.
+    from barista_app_sdk import BaristaClient, Config
+    from barista_app_sdk.models import Operation
+
+    sleeps = []
+    client = BaristaClient(Config(endpoint="http://x.invalid"), transport=MockProvider().transport())
+    calls = {"n": 0}
+
+    def fake_get_operation(op_id):
+        calls["n"] += 1
+        return Operation(id=op_id, kind="exec", done=calls["n"] >= 4)
+
+    monkeypatch.setattr(client, "get_operation", fake_get_operation)
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+    client.wait_operation("op-x", timeout=100)
+    assert sleeps == sorted(sleeps) and sleeps[0] < sleeps[-1]  # backoff, not flat
+    client.close()

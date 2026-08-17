@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -38,6 +39,10 @@ class MissionState:
     finished_at: Optional[str] = None
     tasks: dict[str, TaskState] = field(default_factory=dict)
     _path: Optional[Path] = None
+    # Guards mutate+save sequences: coordinator worker threads share this state,
+    # so a save must snapshot a consistent view (never a receipt-saved-but-still-
+    # running tear) and two writers must not interleave.
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     # -- persistence ------------------------------------------------------ #
     @classmethod
@@ -56,12 +61,13 @@ class MissionState:
     def save(self) -> None:
         if not self._path:
             return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        data = self.to_dict()
-        fd, tmp = tempfile.mkstemp(dir=str(self._path.parent), suffix=".tmp")
-        with os.fdopen(fd, "w") as fh:
-            json.dump(data, fh, indent=1)
-        os.replace(tmp, self._path)
+        with self.lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            data = self.to_dict()
+            fd, tmp = tempfile.mkstemp(dir=str(self._path.parent), suffix=".tmp")
+            with os.fdopen(fd, "w") as fh:
+                json.dump(data, fh, indent=1)
+            os.replace(tmp, self._path)
 
     def to_dict(self) -> dict:
         return {

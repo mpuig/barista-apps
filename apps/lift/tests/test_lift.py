@@ -36,8 +36,16 @@ from barista_app_lift import (  # noqa: E402
 )
 
 
-def _client(name: str) -> BaristaClient:
-    return BaristaClient(Config(endpoint=f"http://{name}.invalid"), transport=MockProvider(name=name).transport())
+def _client(name: str, capabilities: list | None = None) -> BaristaClient:
+    return BaristaClient(
+        Config(endpoint=f"http://{name}.invalid"),
+        transport=MockProvider(name=name, capabilities=capabilities or []).transport(),
+    )
+
+
+# A target that advertises exact capsule transfer, as any real exact target must.
+def _capsule_target() -> BaristaClient:
+    return _client("target", capabilities=["capsule.export", "capsule.import"])
 
 
 class FakeAdapter:
@@ -73,7 +81,7 @@ class FakeAdapter:
 
 # --------------------------------------------------------------------------- #
 def test_exact_compatible_transfer_preserves_then_pauses_source():
-    src, tgt = _client("source"), _client("target")
+    src, tgt = _client("source"), _capsule_target()
     session = src.ensure_session("pi", name="work")
     lift = Lift(src, tgt, capsule=FakeCapsuleClient())
     receipt = lift.transfer(
@@ -89,7 +97,7 @@ def test_exact_compatible_transfer_preserves_then_pauses_source():
 
 
 def test_exact_incompatible_is_refused_and_source_preserved():
-    src, tgt = _client("source"), _client("target")
+    src, tgt = _client("source"), _capsule_target()
     session = src.ensure_session("pi", name="work")
     capsule = FakeCapsuleClient(compat_key="target-cpu", export_compat_key="other-cpu")
     receipt = Lift(src, tgt, capsule=capsule).transfer(
@@ -104,7 +112,7 @@ def test_exact_incompatible_is_refused_and_source_preserved():
 
 
 def test_interrupted_upload_leaves_source_and_records_resumable_state():
-    src, tgt = _client("source"), _client("target")
+    src, tgt = _client("source"), _capsule_target()
     session = src.ensure_session("pi", name="work")
     receipt = Lift(src, tgt, capsule=FakeCapsuleClient(fail_on="import")).transfer(
         SourceRef(managed=True, session_id=session.id), mode="exact", accept=lambda s: True
@@ -116,7 +124,7 @@ def test_interrupted_upload_leaves_source_and_records_resumable_state():
 
 
 def test_target_rejection_does_not_delete_source():
-    src, tgt = _client("source"), _client("target")
+    src, tgt = _client("source"), _capsule_target()
     session = src.ensure_session("pi", name="work")
     receipt = Lift(src, tgt, capsule=FakeCapsuleClient()).transfer(
         SourceRef(managed=True, session_id=session.id),
@@ -126,6 +134,17 @@ def test_target_rejection_does_not_delete_source():
     assert receipt.status == "failed"
     assert receipt.source_disposition == "preserved"
     assert src.get_session(session.id).id == session.id
+    src.close(); tgt.close()
+
+
+def test_exact_without_capsule_client_refuses_cleanly_no_crash():
+    # A capsule-capable target but no capsule client wired: exact must refuse
+    # with a LiftError, never crash on an internal assert (finding 6).
+    src, tgt = _client("source"), _capsule_target()
+    lift = Lift(src, tgt, adapter=FakeAdapter(), target_app="pi")
+    session = src.ensure_session("pi", name="work")
+    with pytest.raises(LiftError):
+        lift.transfer(SourceRef(managed=True, session_id=session.id), mode="exact")
     src.close(); tgt.close()
 
 
