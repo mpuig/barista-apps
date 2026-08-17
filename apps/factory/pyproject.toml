@@ -1,0 +1,25 @@
+[project]
+name = "barista-app-factory"
+version = "0.1.0a1"
+description = "Durable software-factory coordinator as a portable Barista app, driven only through the Host API."
+requires-python = ">=3.10"
+dependencies = ["barista-app-sdk", "jsonschema[format]>=4.20"]
+
+[project.scripts]
+barista-factory = "barista_app_factory.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "starlette>=0.37", "uvicorn>=0.30", "pyyaml>=6.0"]
+
+[tool.uv.sources]
+barista-app-sdk = { path = "../../sdks/python", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_factory"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

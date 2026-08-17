@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/factory/mission.schema.json",
+  "title": "Barista Factory Mission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "app", "tasks"],
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", "maxLength": 40 },
+    "app": {
+      "description": "The installed worker app each task instantiates.",
+      "type": "string"
+    },
+    "concurrency": { "type": "integer", "minimum": 1, "default": 3 },
+    "task_timeout_s": { "type": "integer", "minimum": 1, "default": 3600 },
+    "max_attempts": { "type": "integer", "minimum": 1, "default": 1 },
+    "deadline_s": { "type": "integer", "minimum": 1 },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_workers": { "type": "integer", "minimum": 1 },
+        "max_exec_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "permissions": {
+      "description": "Mission-scoped delegation bounds. Workers receive a narrower grant.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapters": { "type": "array", "items": { "type": "string" } },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "ref"],
+            "properties": {
+              "name": { "type": "string" },
+              "ref": { "type": "string" }
+            }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "egress": { "type": "string", "enum": ["none", "allowlist", "unrestricted"] },
+            "allow": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "notify_url": { "type": "string" },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },
+          "command": { "type": "array", "items": { "type": "string" } },
+          "prompt": { "type": "string" },
+          "check": { "type": "array", "items": { "type": "string" } },
+          "collect": { "type": "boolean", "default": true },
+          "env": { "type": "object", "additionalProperties": { "type": "string" } },
+          "workdir": { "type": "string" }
+        }
+      }
+    }
+  }
+}

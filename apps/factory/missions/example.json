@@ -1,0 +1,17 @@
+{
+  "name": "docs-sweep",
+  "app": "pi",
+  "concurrency": 3,
+  "task_timeout_s": 3600,
+  "max_attempts": 1,
+  "budget": { "max_workers": 8 },
+  "permissions": {
+    "secrets": [{ "name": "MODEL_API_KEY", "ref": "secret://model-provider/api-key" }],
+    "egress": { "egress": "allowlist", "allow": ["ntfy.sh:443"] }
+  },
+  "notify_url": "https://ntfy.sh/my-topic",
+  "tasks": [
+    { "id": "t1", "prompt": "fix the typos in /work/docs and commit", "check": ["git", "-C", "/work", "diff", "--quiet"] },
+    { "id": "t2", "command": ["sh", "-c", "make lint > /work/lint.txt 2>&1"] }
+  ]
+}
