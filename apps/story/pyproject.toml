@@ -1,0 +1,25 @@
+[project]
+name = "barista-app-story"
+version = "0.1.0a1"
+description = "Deterministic, redacted, non-executable Session Story generation for Barista apps."
+requires-python = ">=3.10"
+dependencies = ["barista-app-sdk"]
+
+[project.scripts]
+barista-story = "barista_app_story.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "jsonschema[format]>=4.20"]
+
+[tool.uv.sources]
+barista-app-sdk = { path = "../../sdks/python", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_story"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
