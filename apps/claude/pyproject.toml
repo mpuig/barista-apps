@@ -1,0 +1,22 @@
+[project]
+name = "barista-app-claude"
+version = "0.1.0a1"
+description = "Claude Code harness adapter for Barista apps: detect, export semantic state, and continuation."
+requires-python = ">=3.10"
+dependencies = ["barista-app-sdk"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "jsonschema[format]>=4.20"]
+
+[tool.uv.sources]
+barista-app-sdk = { path = "../../sdks/python", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_claude"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

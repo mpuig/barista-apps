@@ -1,0 +1,37 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "codex",
+  "version": "0.1.0",
+  "description": "Codex CLI as a portable Barista app.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-codex:0.1.0",
+    "digest": "sha256:84b4384eb00cabb157e14d2ddba857cc40f13b3ccc66df4a3f1d9e2d56abfb7a",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/codex"],
+    "working_dir": "/work",
+    "readiness": { "type": "none" }
+  },
+  "capabilities": {
+    "optional": [
+      { "capability": "session.snapshot.exact" }
+    ]
+  },
+  "permissions": {
+    "actions": ["session.exec", "session.events", "artifact.write"],
+    "secrets": [
+      { "name": "OPENAI_API_KEY", "ref": "secret://openai/api-key" }
+    ],
+    "artifacts": { "write": true }
+  },
+  "state_transfer": {
+    "semantic": {
+      "adapter": "sh.barista.adapter.codex"
+    }
+  },
+  "metadata": {
+    "sh.barista.adapter.codex": {
+      "supported_rollout_major_versions": [0],
+      "native_media_type": "application/vnd.codex.rollout+jsonl"
+    }
+  }
+}

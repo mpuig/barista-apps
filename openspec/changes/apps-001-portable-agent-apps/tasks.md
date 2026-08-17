@@ -32,11 +32,11 @@
 
 ## 5. Reference agent adapters
 
-- [ ] 5.1 Create independent `apps/pi`, `apps/claude`, and `apps/codex` packages with manifests, digest-pinned images, supported-version declarations, and auth references.
-- [ ] 5.2 Implement Pi native-state detection/export/continuation and a fidelity report without provider-specific fields.
-- [ ] 5.3 Implement Claude Code native-state detection/export/continuation and a fidelity report without provider-specific fields.
-- [ ] 5.4 Implement Codex native-state detection/export/continuation and a fidelity report without provider-specific fields.
-- [ ] 5.5 Add fixture-based round trips that preserve native opaque attachments and refuse unsupported versions loudly.
+- [x] 5.1 Create independent `apps/pi`, `apps/claude`, and `apps/codex` packages with manifests, digest-pinned images, supported-version declarations, and auth references.
+- [x] 5.2 Implement Pi native-state detection/export/continuation and a fidelity report without provider-specific fields.
+- [x] 5.3 Implement Claude Code native-state detection/export/continuation and a fidelity report without provider-specific fields.
+- [x] 5.4 Implement Codex native-state detection/export/continuation and a fidelity report without provider-specific fields.
+- [x] 5.5 Add fixture-based round trips that preserve native opaque attachments and refuse unsupported versions loudly.
 
 ## 6. Factory app
 

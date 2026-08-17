@@ -1,0 +1,38 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "pi",
+  "version": "0.1.0",
+  "description": "The Pi coding agent as a portable Barista app.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-pi:0.1.0",
+    "digest": "sha256:40c81292467a4fe1b6645672b41e1004decce68279a9efcf68523466d83196d0",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/pi"],
+    "working_dir": "/work",
+    "readiness": { "type": "none" }
+  },
+  "capabilities": {
+    "optional": [
+      { "capability": "session.snapshot.exact" },
+      { "capability": "session.fork" }
+    ]
+  },
+  "permissions": {
+    "actions": ["session.exec", "session.events", "artifact.write"],
+    "secrets": [
+      { "name": "MODEL_API_KEY", "ref": "secret://model-provider/api-key" }
+    ],
+    "artifacts": { "write": true }
+  },
+  "state_transfer": {
+    "semantic": {
+      "adapter": "sh.barista.adapter.pi"
+    }
+  },
+  "metadata": {
+    "sh.barista.adapter.pi": {
+      "supported_session_versions": [3],
+      "native_media_type": "application/vnd.pi.session+jsonl"
+    }
+  }
+}
