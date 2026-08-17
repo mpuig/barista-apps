@@ -1,0 +1,569 @@
+openapi: 3.1.0
+info:
+  title: Barista Host API
+  version: v1alpha1
+  description: >
+    Provider-neutral wire contract through which portable apps control sessions
+    and artifacts without addressing a privileged Barista node directly. Apps
+    target this API and discover capabilities; they never call the kernel's
+    Node Agent contract or a provider's private surface.
+
+
+    Media type: application/vnd.barista.host-api.v1alpha1+json
+  license:
+    name: Apache-2.0
+servers:
+  - url: "{endpoint}"
+    description: Any conformant provider (local socket adapter, Barista Cloud, or a third party).
+    variables:
+      endpoint:
+        default: http://localhost:8088
+
+tags:
+  - name: discovery
+  - name: apps
+  - name: sessions
+  - name: exec
+  - name: events
+  - name: artifacts
+  - name: operations
+
+paths:
+  /v1alpha1/discovery:
+    get:
+      tags: [discovery]
+      operationId: getDiscovery
+      summary: Contract versions, core support, optional capabilities, limits, and extensions.
+      description: >
+        Capabilities reflect the selected account/provider context, not every
+        capability somewhere in a fleet. An app negotiates here before creating
+        any resource.
+      responses:
+        "200":
+          description: Discovery document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Discovery"
+
+  /v1alpha1/apps:
+    post:
+      tags: [apps]
+      operationId: installApp
+      summary: Validate and install an App Manifest.
+      description: >
+        Rejects a manifest whose required capabilities are unmet BEFORE any side
+        effect, and rejects a manifest that fails schema validation (e.g. a
+        mutable image without a digest).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/vnd.barista.app-manifest.v1alpha1+json:
+            schema:
+              $ref: "#/components/schemas/AppManifestRef"
+      responses:
+        "201":
+          description: App installed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+
+  /v1alpha1/sessions:
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List sessions.
+      parameters:
+        - name: app
+          in: query
+          schema: { type: string }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Session page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+    post:
+      tags: [sessions]
+      operationId: ensureSession
+      summary: Ensure (create-or-return) a session.
+      description: >
+        Idempotent by (idempotency key). Replaying the same request and key
+        returns the same logical session and operation rather than a duplicate.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnsureSessionRequest"
+      responses:
+        "200":
+          description: Existing session returned (idempotent replay).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "201":
+          description: Session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "402":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+
+  /v1alpha1/sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: Get session detail.
+      responses:
+        "200":
+          description: Session detail. Same logical shape across providers; never exposes node addresses or credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [sessions]
+      operationId: deleteSession
+      summary: Delete a session.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Deletion accepted (async operation).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /v1alpha1/sessions/{sessionId}/pause:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [sessions]
+      operationId: pauseSession
+      summary: Pause a session (capability session.pause_resume).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Pause accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "501":
+          $ref: "#/components/responses/Error"
+
+  /v1alpha1/sessions/{sessionId}/resume:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [sessions]
+      operationId: resumeSession
+      summary: Resume a session (capability session.pause_resume).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Resume accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "501":
+          $ref: "#/components/responses/Error"
+
+  /v1alpha1/sessions/{sessionId}/exec:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [exec]
+      operationId: execSession
+      summary: Run a command; returns an exec handle with exit and stream cursors.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecRequest" }
+      responses:
+        "200":
+          description: Exec started; poll the operation or stream events for output and exit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecHandle" }
+
+  /v1alpha1/sessions/{sessionId}/attach:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [exec]
+      operationId: attachSession
+      summary: Upgrade to a WebSocket attach stream.
+      description: >
+        Provides a byte-clean non-PTY mode and a terminal (PTY) mode selected by
+        the `mode` query parameter. Frames follow the attach-frame schema in
+        `streaming/attach-frame.schema.json`.
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema: { type: string, enum: [raw, pty] }
+      responses:
+        "101":
+          description: Switching Protocols (WebSocket).
+        "426":
+          $ref: "#/components/responses/Error"
+
+  /v1alpha1/sessions/{sessionId}/events:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Resumable Server-Sent Events for a session.
+      description: >
+        Events carry stable cursors. Reconnect with `Last-Event-ID` (or the
+        `cursor` query parameter) to resume without skipping or duplicating.
+        Event payloads follow `streaming/event.schema.json`.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        "200":
+          description: SSE stream (text/event-stream).
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /v1alpha1/sessions/{sessionId}/artifacts:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [artifacts]
+      operationId: listArtifacts
+      summary: List artifacts registered for a session.
+      responses:
+        "200":
+          description: Artifact list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArtifactList" }
+    post:
+      tags: [artifacts]
+      operationId: registerArtifact
+      summary: Register a content-addressed artifact.
+      description: >
+        Artifacts are content-addressed so harvested results outlive a reaped
+        worker. The body declares digest, length, and media type.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterArtifactRequest" }
+      responses:
+        "201":
+          description: Artifact registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Artifact" }
+
+  /v1alpha1/operations/{operationId}:
+    parameters:
+      - name: operationId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [operations]
+      operationId: getOperation
+      summary: Read an operation, including after client disconnect.
+      responses:
+        "200":
+          description: Operation state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "404":
+          $ref: "#/components/responses/Error"
+
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Stable key that makes a mutation safely retryable.
+      schema: { type: string, maxLength: 255 }
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: Standard error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Discovery:
+      type: object
+      additionalProperties: false
+      required: [contract_versions, core_profile, capabilities, limits]
+      properties:
+        contract_versions:
+          type: array
+          items: { type: string }
+          example: ["v1alpha1"]
+        provider:
+          type: object
+          properties:
+            name: { type: string }
+            version: { type: string }
+        core_profile:
+          description: Whether the mandatory core profile is fully supported.
+          type: boolean
+        capabilities:
+          description: Advertised optional profiles for THIS provider/account context.
+          type: array
+          items: { $ref: "#/components/schemas/CapabilityId" }
+        limits:
+          type: object
+          additionalProperties: { type: integer }
+          example:
+            max_concurrent_sessions: 100
+            max_exec_seconds: 3600
+        extensions:
+          description: Namespaced, optional provider extensions. Never alter core fields.
+          type: object
+          additionalProperties: true
+
+    CapabilityId:
+      type: string
+      enum:
+        - session.pause_resume
+        - session.snapshot.exact
+        - session.fork
+        - capsule.export
+        - capsule.import
+        - grants.delegated
+        - story.publish
+        - branch.evaluation
+
+    AppManifestRef:
+      description: An inline App Manifest or a reference to one.
+      type: object
+      additionalProperties: true
+
+    App:
+      type: object
+      additionalProperties: false
+      required: [name, version, digest, installed_at]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        digest: { type: string }
+        granted_capabilities:
+          type: array
+          items: { $ref: "#/components/schemas/CapabilityId" }
+        installed_at: { type: string, format: date-time }
+
+    EnsureSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [app]
+      properties:
+        app:
+          description: App name (installed) or inline manifest reference.
+          type: string
+        name:
+          description: Optional stable logical name for ensure semantics.
+          type: string
+        args:
+          type: array
+          items: { type: string }
+        env:
+          description: Non-secret environment. Secret values are never accepted here.
+          type: object
+          additionalProperties: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    Session:
+      type: object
+      additionalProperties: false
+      required: [id, app, state, created_at]
+      properties:
+        id:
+          description: Logical, provider-scoped handle. Never a node address or internal db id.
+          type: string
+        name: { type: string }
+        app: { type: string }
+        state:
+          type: string
+          enum: [creating, running, paused, stopped, error]
+        created_at: { type: string, format: date-time }
+        lineage:
+          $ref: "#/components/schemas/Lineage"
+        metadata:
+          type: object
+          additionalProperties: true
+
+    Lineage:
+      type: object
+      additionalProperties: false
+      properties:
+        parent_session_id: { type: string }
+        source_capsule_id: { type: string }
+
+    SessionList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Session" }
+        next_cursor: { type: string }
+
+    ExecRequest:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        working_dir: { type: string }
+        timeout_seconds: { type: integer, minimum: 1 }
+
+    ExecHandle:
+      type: object
+      additionalProperties: false
+      required: [operation_id, event_cursor]
+      properties:
+        operation_id: { type: string }
+        event_cursor:
+          description: Cursor to begin reading exec stdout/stderr/exit events.
+          type: string
+
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [id, kind, done]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [ensure, delete, pause, resume, exec, artifact, fork, capsule_export, capsule_import]
+        done: { type: boolean }
+        session_id: { type: string }
+        result:
+          type: object
+          additionalProperties: true
+        error:
+          $ref: "#/components/schemas/Error"
+        last_event_cursor: { type: string }
+
+    RegisterArtifactRequest:
+      type: object
+      additionalProperties: false
+      required: [name, digest, size_bytes, media_type]
+      properties:
+        name: { type: string }
+        digest:
+          type: string
+          pattern: "^sha(256|512):[0-9a-f]{64,128}$"
+        size_bytes: { type: integer, minimum: 0 }
+        media_type: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    Artifact:
+      type: object
+      additionalProperties: false
+      required: [id, name, digest, size_bytes, media_type, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        digest: { type: string }
+        size_bytes: { type: integer }
+        media_type: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ArtifactList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Artifact" }
+
+    Error:
+      description: >
+        Standard error model. `class` classifies the failure so a client can
+        decide whether to retry, re-auth, or fail terminally.
+      type: object
+      additionalProperties: false
+      required: [class, code, message]
+      properties:
+        class:
+          type: string
+          enum:
+            - authentication
+            - authorization
+            - capability
+            - compatibility
+            - conflict
+            - quota
+            - unavailable
+            - terminal
+            - invalid_request
+        code:
+          description: Stable machine code, e.g. capability.unsupported.
+          type: string
+        message: { type: string }
+        retryable: { type: boolean }
+        details:
+          type: object
+          additionalProperties: true

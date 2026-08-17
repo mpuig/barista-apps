@@ -1,0 +1,12 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "pi",
+  "version": "0.1.0",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-pi:0.1.0",
+    "digest": "sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    "architectures": ["aarch64"],
+    "entrypoint": ["/usr/local/bin/pi"],
+    "readiness": { "type": "none" }
+  }
+}

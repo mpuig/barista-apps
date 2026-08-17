@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "no-digest-app",
+  "version": "0.1.0",
+  "workload": {
+    "image": "example/app:latest",
+    "architectures": ["aarch64"],
+    "entrypoint": ["/app/run"],
+    "readiness": { "type": "none" }
+  }
+}

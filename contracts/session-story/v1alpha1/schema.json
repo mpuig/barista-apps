@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/session-story/v1alpha1/schema.json",
+  "title": "Barista Session Story",
+  "description": "A deterministic, redacted, non-executable knowledge bundle. Media type: application/vnd.barista.session-story.v1alpha1+json. A story contains NO capsule objects, writable filesystem, bearer grants, or executable permission.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "story_id", "redaction_policy", "created_at", "records"],
+  "properties": {
+    "schema_version": { "const": "v1alpha1" },
+    "story_id": {
+      "description": "Content id: digest over the canonical serialization of this bundle (excluding this field and any signature).",
+      "type": "string",
+      "pattern": "^sha(256|512):[0-9a-f]{64,128}$"
+    },
+    "title": { "type": "string", "maxLength": 256 },
+    "redaction_policy": {
+      "description": "Versioned deterministic redaction policy applied to produce this bundle.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "description": "Provenance. Never includes node addresses, credentials, or capsule references.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "app": { "type": "string" },
+        "app_version": { "type": "string" }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/record" }
+    },
+    "removed": {
+      "description": "Category-level report of what redaction removed. Never the removed values themselves.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "count"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["secret", "credential", "pii", "unknown_media", "oversize", "other"]
+          },
+          "count": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "signature": {
+      "description": "Optional detached signature over the canonical bundle bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "type": "string" },
+        "value": { "type": "string" },
+        "key_id": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "type"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 0 },
+        "type": {
+          "type": "string",
+          "enum": ["event", "decision", "command", "diff", "commit", "receipt", "evaluation", "artifact_ref"]
+        },
+        "time": { "type": "string", "format": "date-time" },
+        "text": {
+          "description": "Redacted human-readable content.",
+          "type": "string"
+        },
+        "artifact": {
+          "description": "For type=artifact_ref: explicitly selected, content-addressed, non-executable artifact reference.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["digest", "media_type"],
+          "properties": {
+            "name": { "type": "string" },
+            "digest": {
+              "type": "string",
+              "pattern": "^sha(256|512):[0-9a-f]{64,128}$"
+            },
+            "media_type": { "type": "string" }
+          }
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

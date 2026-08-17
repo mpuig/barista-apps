@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/app-manifest/v1alpha1/schema.json",
+  "title": "Barista App Manifest",
+  "description": "Portable, least-privilege declaration for packaging and running a Barista application on any conformant Host API provider. Media type: application/vnd.barista.app-manifest.v1alpha1+json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "name",
+    "version",
+    "workload"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Manifest schema version. Establishes wire compatibility.",
+      "const": "v1alpha1"
+    },
+    "name": {
+      "description": "App name. Reverse-DNS or short identifier; combined with version and workload digest it is the app identity.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$",
+      "minLength": 1,
+      "maxLength": 214
+    },
+    "version": {
+      "description": "App version (semver recommended). Part of app identity together with the workload digest.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "workload": {
+      "$ref": "#/$defs/workload"
+    },
+    "endpoints": {
+      "description": "Optional service endpoints the workload exposes.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/endpoint"
+      }
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "permissions": {
+      "$ref": "#/$defs/permissions"
+    },
+    "state_transfer": {
+      "$ref": "#/$defs/state_transfer"
+    },
+    "metadata": {
+      "description": "Opaque, namespaced app metadata. A host preserves recognized envelope constraints without understanding any specific harness. Keys are app namespaces (reverse-DNS).",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "oci_digest": {
+      "description": "Immutable OCI content digest, e.g. sha256:<64 hex>.",
+      "type": "string",
+      "pattern": "^sha(256|512):[0-9a-f]{64,128}$"
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "digest",
+        "architectures",
+        "entrypoint",
+        "readiness"
+      ],
+      "properties": {
+        "image": {
+          "description": "OCI image reference. A mutable tag here is a human label only and does NOT establish app identity.",
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/oci_digest",
+          "description": "Immutable image digest. Establishes executable identity. Required."
+        },
+        "architectures": {
+          "description": "Supported CPU architectures.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["aarch64", "x86_64"]
+          }
+        },
+        "entrypoint": {
+          "description": "Command executed to start the workload.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "working_dir": {
+          "type": "string"
+        },
+        "readiness": {
+          "$ref": "#/$defs/readiness"
+        }
+      }
+    },
+    "readiness": {
+      "description": "How the host determines the workload is ready to serve.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["exec", "http", "tcp", "log_line", "none"]
+        },
+        "command": {
+          "description": "For type=exec: command whose zero exit means ready.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "http_path": {
+          "description": "For type=http: path polled for a 2xx.",
+          "type": "string"
+        },
+        "port": {
+          "description": "For type=http or type=tcp.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "log_pattern": {
+          "description": "For type=log_line: regex matched against stdout/stderr.",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "protocol", "port"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": ["http", "websocket", "mcp", "acp", "tcp"]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "capability_id": {
+      "description": "A discoverable Host API capability/profile identifier.",
+      "type": "string",
+      "enum": [
+        "session.pause_resume",
+        "session.snapshot.exact",
+        "session.fork",
+        "capsule.export",
+        "capsule.import",
+        "grants.delegated",
+        "story.publish",
+        "branch.evaluation"
+      ]
+    },
+    "capability_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/capability_id" },
+        "min_contract_version": {
+          "type": "string"
+        },
+        "constraints": {
+          "description": "Optional semantic constraints (e.g. min limits) the provider must satisfy.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "capabilities": {
+      "description": "Host capabilities the app needs. Required capabilities must be advertised by the provider before any side effect; the discovered optional set is delivered to the app at launch.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability_requirement" }
+        },
+        "optional": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability_requirement" }
+        }
+      }
+    },
+    "action_id": {
+      "description": "A Host API action the app may perform. Least-privilege.",
+      "type": "string",
+      "enum": [
+        "session.create",
+        "session.get",
+        "session.list",
+        "session.delete",
+        "session.exec",
+        "session.attach",
+        "session.events",
+        "session.pause",
+        "session.resume",
+        "session.fork",
+        "artifact.read",
+        "artifact.write",
+        "capsule.export",
+        "capsule.import",
+        "story.publish"
+      ]
+    },
+    "permissions": {
+      "description": "Least-privilege declaration of what the app is allowed to do. Contains only secret references, never plaintext.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/action_id" }
+        },
+        "network": {
+          "$ref": "#/$defs/network_policy"
+        },
+        "secrets": {
+          "description": "Secret references by name only. Plaintext is rejected.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/secret_reference" }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": { "type": "boolean", "default": false },
+            "write": { "type": "boolean", "default": false }
+          }
+        },
+        "publication": {
+          "description": "Publication surfaces the app may use (e.g. story).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["story"]
+          }
+        },
+        "child_sessions": {
+          "$ref": "#/$defs/child_session_limits"
+        },
+        "degraded_modes": {
+          "description": "Named degraded modes the app can validly run in when a host grants less than requested.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "without"],
+            "properties": {
+              "name": { "type": "string" },
+              "without": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/capability_id" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "network_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "egress": {
+          "type": "string",
+          "enum": ["none", "allowlist", "unrestricted"],
+          "default": "none"
+        },
+        "allow": {
+          "description": "For egress=allowlist: host or host:port entries.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "secret_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ref"],
+      "properties": {
+        "name": {
+          "description": "Environment/logical name the workload sees.",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Provider-resolvable reference. NEVER a plaintext value.",
+          "type": "string"
+        }
+      }
+    },
+    "child_session_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrent": { "type": "integer", "minimum": 0 },
+        "max_total": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "state_transfer": {
+      "description": "Hooks for exact (capsule) and semantic (adapter) session transfer.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exact": {
+          "description": "Whether this app's sessions can be exactly forked/captured (requires provider capability).",
+          "type": "boolean",
+          "default": false
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "adapter": {
+              "description": "Adapter namespace responsible for semantic export/continuation (e.g. sh.barista.adapter.pi).",
+              "type": "string"
+            },
+            "pre_export": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "post_import": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

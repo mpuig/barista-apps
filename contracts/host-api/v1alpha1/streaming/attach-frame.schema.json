@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/host-api/v1alpha1/attach-frame.schema.json",
+  "title": "Barista Host API Attach Frame",
+  "description": "A single frame on a WebSocket attach stream. `raw` mode is byte-clean (non-PTY); `pty` mode carries terminal I/O and resize control.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["direction", "kind"],
+  "properties": {
+    "direction": {
+      "type": "string",
+      "enum": ["client_to_host", "host_to_client"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["stdin", "stdout", "stderr", "resize", "close", "exit"]
+    },
+    "chunk": {
+      "description": "For stdin/stdout/stderr: base64-encoded bytes. Preserved verbatim in raw mode.",
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "resize": {
+      "description": "For kind=resize (pty mode only).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cols", "rows"],
+      "properties": {
+        "cols": { "type": "integer", "minimum": 1 },
+        "rows": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "exit_code": {
+      "description": "For kind=exit.",
+      "type": "integer"
+    }
+  }
+}
