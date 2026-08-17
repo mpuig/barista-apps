@@ -122,13 +122,14 @@ def ensure_and_get(client, config, advertised):
     sid = _ensure_a_session(client)
     got = client.get_session(sid)
     assert got.status_code == 200, f"get_session returned {got.status_code}"
+    # The closed Session schema (additionalProperties: false) is the real leak
+    # gate: a node address, credential, or internal id would appear as an
+    # unexpected field and fail validation. Substring scanning gave both false
+    # positives (a fractional-second timestamp contains '10.') and false
+    # negatives (IPv6, /run paths, hostnames), so validation replaces it.
     schemas.assert_valid(schemas.component_validator("Session"), got.json(), "Session")
-    # Provider internals must not leak.
-    blob = json.dumps(got.json())
-    for leak in ("unix:", "/var/run", ".sock", "10.", "192.168."):
-        assert leak not in blob, f"session detail leaked provider internal '{leak}'"
     client.delete_session(sid, key=new_idempotency_key())
-    return ok("core.ensure_and_get", CORE, "session created, read back, no internal leakage")
+    return ok("core.ensure_and_get", CORE, "session created, read back, schema-valid (no leaked fields)")
 
 
 @case("core.ensure_idempotent")
@@ -167,7 +168,32 @@ def exec_case(client, config, advertised):
                 break
             time.sleep(0.05)
         assert done, "exec operation never completed"
-        return ok("core.exec", CORE, "exec produced a readable operation that completed")
+        # The handle's event_cursor is an exclusive resume point BEFORE the exec
+        # output: reading from it must surface this command's stdout, not skip it.
+        seen = list(client.events(sid, cursor=handle["event_cursor"], max_events=10))
+        assert any(e["type"] == "exec.stdout" for e in seen), (
+            "reading events from the exec handle's cursor skipped the command's stdout"
+        )
+        return ok("core.exec", CORE, "exec operation completed and its cursor surfaces stdout")
+    finally:
+        client.delete_session(sid, key=new_idempotency_key())
+
+
+@case("core.attach_contract")
+def attach_contract(client, config, advertised):
+    """Attach is part of the core profile: it must upgrade (101) or return a
+    classified error (e.g. 426), never a plain unstructured 404/500."""
+    sid = _ensure_a_session(client)
+    try:
+        resp = client.attach(sid, mode="raw")
+        if resp.status_code == 101:
+            return ok("core.attach_contract", CORE, "attach upgraded to a stream")
+        assert resp.status_code in (426, 501), (
+            f"attach must upgrade or return a classified 426/501, got {resp.status_code}"
+        )
+        schemas.assert_valid(schemas.component_validator("Error"), resp.json(), "Error")
+        assert resp.json()["class"] in ("capability", "compatibility")
+        return ok("core.attach_contract", CORE, "attach returns a classified capability error")
     finally:
         client.delete_session(sid, key=new_idempotency_key())
 

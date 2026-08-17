@@ -317,8 +317,9 @@
           "type": "string"
         },
         "ref": {
-          "description": "Provider-resolvable reference. NEVER a plaintext value.",
-          "type": "string"
+          "description": "Provider-resolvable reference (a scheme URI such as secret://, grant://, ref://, vault://, or env://). NEVER a plaintext value — the pattern rejects a bare credential.",
+          "type": "string",
+          "pattern": "^(secret|grant|ref|vault|env)://.+$"
         }
       }
     },

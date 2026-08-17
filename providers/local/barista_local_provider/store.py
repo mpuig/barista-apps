@@ -87,6 +87,9 @@ class Store:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "provider.db"
         self._db = sqlite3.connect(self.db_path, check_same_thread=False)
+        # WAL lets a status poll (read) proceed without blocking on a writer, so
+        # the hot read path is not serialized behind lifecycle writes.
+        self._db.execute("PRAGMA journal_mode=WAL")
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
         self._db.commit()
@@ -133,10 +136,18 @@ class Store:
     def idempotent_record(self, key: Optional[str], kind: str, resource_id: str) -> None:
         if not key:
             return
+        # REPLACE, not IGNORE: if a key's prior resource is gone (e.g. the session
+        # it minted was deleted), the mapping is refreshed to the new resource so
+        # a later replay stays idempotent instead of minting a fresh one each time.
         self._db.execute(
-            "INSERT OR IGNORE INTO idempotency VALUES (?,?,?,?)",
+            "INSERT OR REPLACE INTO idempotency VALUES (?,?,?,?)",
             (key, kind, resource_id, _now()),
         )
+        self._db.commit()
+
+    def purge_idempotency_for(self, resource_id: str) -> None:
+        """Drop idempotency rows pointing at a resource that no longer exists."""
+        self._db.execute("DELETE FROM idempotency WHERE resource_id=?", (resource_id,))
         self._db.commit()
 
     # -- sessions --------------------------------------------------------- #
@@ -177,6 +188,8 @@ class Store:
 
     def delete_session(self, sid: str) -> None:
         self._db.execute("DELETE FROM sessions WHERE id=?", (sid,))
+        # The ensure key that minted this session must not resurrect a ghost.
+        self._db.execute("DELETE FROM idempotency WHERE resource_id=?", (sid,))
         self._db.commit()
 
     def node_instance_id(self, sid: str) -> Optional[str]:
@@ -186,12 +199,16 @@ class Store:
     def _session_dict(self, row: sqlite3.Row) -> dict:
         out = {
             "id": row["id"],
-            "name": row["name"],
             "app": row["app"],
             "state": row["state"],
             "created_at": row["created_at"],
             "metadata": json.loads(row["metadata"] or "{}"),
         }
+        # `name` is an optional string in the Host API schema (no null in
+        # OpenAPI 3.1): omit it rather than emit null so a schema-validating
+        # client accepts an unnamed session.
+        if row["name"]:
+            out["name"] = row["name"]
         if row["parent_session_id"]:
             out["lineage"] = {"parent_session_id": row["parent_session_id"]}
         return out
@@ -233,6 +250,15 @@ class Store:
         self._db.commit()
         return cursor_of(cur.lastrowid)
 
+    def current_max_cursor(self, session_id: str) -> str:
+        """The newest cursor for a session, as an exclusive resume point. Reading
+        events after it yields only what is appended next — which is exactly the
+        cursor an exec should hand back so the caller sees the command's output."""
+        row = self._db.execute(
+            "SELECT MAX(seq) AS m FROM events WHERE session_id=?", (session_id,)
+        ).fetchone()
+        return cursor_of(row["m"] or 0)
+
     def read_events(self, session_id: str, after_cursor: Optional[str] = None,
                    limit: int = 100) -> list[dict]:
         after = int(after_cursor) if after_cursor else 0
@@ -268,6 +294,16 @@ class Store:
             "id": art_id, "name": body["name"], "digest": body["digest"],
             "size_bytes": body["size_bytes"], "media_type": body["media_type"],
             "created_at": created,
+        }
+
+    def get_artifact(self, artifact_id: str) -> Optional[dict]:
+        r = self._db.execute("SELECT * FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
+        if not r:
+            return None
+        return {
+            "id": r["id"], "name": r["name"], "digest": r["digest"],
+            "size_bytes": r["size_bytes"], "media_type": r["media_type"],
+            "created_at": r["created_at"],
         }
 
     def list_artifacts(self, session_id: str) -> list[dict]:

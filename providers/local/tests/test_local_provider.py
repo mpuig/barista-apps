@@ -9,6 +9,7 @@ hypervisor.
 
 from __future__ import annotations
 
+import json
 import socket
 import sys
 import threading
@@ -203,3 +204,155 @@ def _instance_request(instance_id: str, manifest: dict):
         arch=w["architectures"][0],
         start_cmd=list(w["entrypoint"]),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Review-finding regressions
+# --------------------------------------------------------------------------- #
+def _install_and_ensure(client_base, headers=None):
+    import httpx
+
+    headers = headers or {}
+    httpx.post(f"{client_base}/apps", content=json.dumps(_minimal_manifest()),
+               headers={"content-type": "application/vnd.barista.app-manifest.v1alpha1+json", **headers})
+    r = httpx.post(f"{client_base}/sessions", json={"app": "pi"}, headers=headers)
+    return r.json()["id"]
+
+
+def test_auth_is_enforced_on_every_mutation_when_token_set(tmp_path):
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data", token="s3cret")
+    port = _free_port()
+    auth = {"authorization": "Bearer s3cret"}
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            sid = _install_and_ensure(base, auth)
+            # Every mutating/reading session route rejects a missing token — not
+            # just install/ensure (finding 1).
+            assert httpx.post(f"{base}/sessions/{sid}/exec", json={"command": ["echo", "x"]}).status_code == 401
+            assert httpx.get(f"{base}/sessions/{sid}").status_code == 401
+            assert httpx.get(f"{base}/sessions/{sid}/events").status_code == 401
+            assert httpx.get(f"{base}/sessions/{sid}/artifacts").status_code == 401
+            assert httpx.delete(f"{base}/sessions/{sid}").status_code == 401
+            # Discovery stays open (pre-auth negotiation).
+            assert httpx.get(f"{base}/discovery").status_code == 200
+    finally:
+        store.close(); node.close()
+
+
+def test_idempotent_exec_and_artifact_do_not_duplicate(tmp_path):
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            sid = _install_and_ensure(base)
+            k = {"Idempotency-Key": "exec-1"}
+            r1 = httpx.post(f"{base}/sessions/{sid}/exec", json={"command": ["echo", "hi"]}, headers=k)
+            r2 = httpx.post(f"{base}/sessions/{sid}/exec", json={"command": ["echo", "hi"]}, headers=k)
+            assert r1.json()["operation_id"] == r2.json()["operation_id"]  # finding 2
+
+            ak = {"Idempotency-Key": "art-1"}
+            body = {"name": "o", "digest": "sha256:" + "ab" * 32, "size_bytes": 1, "media_type": "text/plain"}
+            a1 = httpx.post(f"{base}/sessions/{sid}/artifacts", json=body, headers=ak)
+            a2 = httpx.post(f"{base}/sessions/{sid}/artifacts", json=body, headers=ak)
+            assert a1.json()["id"] == a2.json()["id"]
+            assert len(httpx.get(f"{base}/sessions/{sid}/artifacts").json()["items"]) == 1
+    finally:
+        store.close(); node.close()
+
+
+def test_exec_cursor_surfaces_stdout(tmp_path):
+    import base64
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            sid = _install_and_ensure(base)
+            h = httpx.post(f"{base}/sessions/{sid}/exec", json={"command": ["echo", "hi"]}).json()
+            # Reading events from the handle cursor must include exec.stdout (finding 3).
+            with httpx.stream("GET", f"{base}/sessions/{sid}/events",
+                              params={"cursor": h["event_cursor"]}) as resp:
+                body = "".join(resp.iter_text())
+            assert "exec.stdout" in body
+    finally:
+        store.close(); node.close()
+
+
+def test_install_rejects_unmet_required_capability(tmp_path):
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            m = _minimal_manifest()
+            m["capabilities"] = {"required": [{"capability": "capsule.export"}]}
+            r = httpx.post(f"{base}/apps", content=json.dumps(m),
+                           headers={"content-type": "application/vnd.barista.app-manifest.v1alpha1+json"})
+            assert r.status_code == 501 and r.json()["class"] == "capability"  # finding 4
+    finally:
+        store.close(); node.close()
+
+
+def test_unnamed_session_validates_against_schema(tmp_path):
+    import httpx
+    from jsonschema import Draft202012Validator
+    import yaml
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            httpx.post(f"{base}/apps", content=json.dumps(_minimal_manifest()),
+                       headers={"content-type": "application/vnd.barista.app-manifest.v1alpha1+json"})
+            s = httpx.post(f"{base}/sessions", json={"app": "pi"}).json()  # no name
+            assert "name" not in s  # finding 11: omitted, not null
+            spec = yaml.safe_load((REPO / "contracts" / "host-api" / "v1alpha1" / "openapi.yaml").read_text())
+            comps = spec["components"]["schemas"]
+            root = {"$defs": comps, "$ref": "#/$defs/Session"}
+            # rewrite refs
+            import json as _j
+            root = _j.loads(_j.dumps(root).replace("#/components/schemas/", "#/$defs/"))
+            Draft202012Validator(root).validate(s)
+    finally:
+        store.close(); node.close()
+
+
+def test_attach_returns_structured_426_not_plain_404(tmp_path):
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            sid = _install_and_ensure(base)
+            r = httpx.get(f"{base}/sessions/{sid}/attach", params={"mode": "raw"})
+            assert r.status_code == 426 and r.json()["class"] == "capability"  # finding 12
+    finally:
+        store.close(); node.close()
+
+
+def test_non_numeric_cursor_is_a_422_not_a_500(tmp_path):
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            sid = _install_and_ensure(base)
+            r = httpx.get(f"{base}/sessions/{sid}/events", params={"cursor": "abc"})
+            assert r.status_code == 422 and r.json()["class"] == "invalid_request"  # finding 13
+    finally:
+        store.close(); node.close()

@@ -10,13 +10,12 @@ for forensics, and reconstructs its state idempotently after a restart.
 from __future__ import annotations
 
 import concurrent.futures
-import hashlib
-import json
 import time
 from pathlib import Path
 from typing import Optional
 
 from barista_app_sdk import BaristaClient
+from barista_app_sdk.content import canonical_bytes, content_id
 from barista_app_sdk.errors import HostAPIError
 
 from .grants import derive_worker_grant
@@ -57,9 +56,15 @@ class Coordinator:
         if ts.state == "ok":
             return  # already harvested; restart must not re-run it
 
+        # Recovery must re-ensure the SAME worker, not start a new attempt: only
+        # a genuinely new run increments the attempt counter. A task found mid
+        # flight ('running') reuses its existing attempt so the idempotency key
+        # is unchanged and ensure returns the original worker instead of spawning
+        # a second one and orphaning the first.
+        if not (ts.state == "running" and ts.attempts > 0):
+            ts.attempts += 1
         ts.state = "running"
         ts.worker = self._worker_name(task)
-        ts.attempts += 1
         self.state.save()
 
         # A stable idempotency key per (mission, task, attempt): a lost response
@@ -118,21 +123,27 @@ class Coordinator:
             "harvested": bool(task.collect),
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        blob = json.dumps(receipt, sort_keys=True).encode()
+        # Content-addressed with the ecosystem's one canonical serialization
+        # (barista_app_sdk.content), so a receipt's digest matches any other
+        # content-addressed object and a future verifier recomputes it.
+        blob = canonical_bytes(receipt)
         artifact = self.client.register_artifact(
             coord,
             name=f"receipt-{task.id}.json",
-            digest="sha256:" + hashlib.sha256(blob).hexdigest(),
+            digest=content_id(receipt),
             size_bytes=len(blob),
             media_type=RECEIPT_MEDIA_TYPE,
             idempotency_key=f"{self.mission.name}:{task.id}:receipt",
         )
         artifact_id = artifact.id
 
-        ts.receipt = receipt
-        ts.receipt_artifact_id = artifact_id
-        ts.state = "ok"
-        self.state.save()
+        # Atomic under the state lock so a concurrent save never captures the
+        # receipt-set-but-still-running tear.
+        with self.state.lock:
+            ts.receipt = receipt
+            ts.receipt_artifact_id = artifact_id
+            ts.state = "ok"
+            self.state.save()
 
         # The reap: only now, with the receipt durable, delete the worker.
         try:

@@ -162,13 +162,25 @@ class MockProvider:
             if sid not in self.sessions:
                 return self._error(404, "terminal", "session.not_found", "no such session")
             op_id = "op-" + uuid.uuid4().hex[:12]
-            cursor = self._emit(sid, "exec.stdout", {"chunk": "aGVsbG8="}, op_id)
+            # event_cursor is an EXCLUSIVE resume point captured BEFORE the exec
+            # events, so reading after it yields this command's stdout onward.
+            event_cursor = f"{self._seq:012d}"
+            self._emit(sid, "exec.stdout", {"chunk": "aGVsbG8="}, op_id)
             self._emit(sid, "exec.exit", {"exit_code": 0}, op_id)
             self.operations[op_id] = {
                 "id": op_id, "kind": "exec", "done": True, "session_id": sid,
-                "result": {"exit_code": 0}, "last_event_cursor": cursor,
+                "result": {"exit_code": 0}, "last_event_cursor": event_cursor,
             }
-            return self._json(200, {"operation_id": op_id, "event_cursor": cursor})
+            return self._json(200, {"operation_id": op_id, "event_cursor": event_cursor})
+
+        m = re.match(rf"^{BASE}/sessions/([^/]+)/attach$", path)
+        if m and method == "GET":
+            sid = m.group(1)
+            if sid not in self.sessions:
+                return self._error(404, "terminal", "session.not_found", "no such session")
+            # This double has no byte stream to upgrade to: return the contract's
+            # structured 426 rather than a plain error.
+            return self._error(426, "capability", "attach.upgrade_required", "attach not supported")
 
         m = re.match(rf"^{BASE}/sessions/([^/]+)/artifacts$", path)
         if m:
