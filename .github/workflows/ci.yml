@@ -52,3 +52,15 @@ jobs:
       - name: Conformance suite self-tests (offline)
         working-directory: conformance
         run: uv run --extra test pytest -q
+
+  local-provider:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Local provider tests + conformance (Cloud blocked)
+        working-directory: providers/local
+        run: uv run --extra test pytest -q

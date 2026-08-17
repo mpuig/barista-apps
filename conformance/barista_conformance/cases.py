@@ -70,7 +70,12 @@ def _no_digest_manifest() -> dict:
 
 
 def _ensure_a_session(client: HostAPIClient) -> str:
-    resp = client.ensure_session({"app": "pi", "name": "conf-" + new_idempotency_key()})
+    # A session is an instance of an installed app. Install the minimal app
+    # first (idempotent by name+version), then ensure a session of it. This
+    # matches how a real provider resolves a workload from an installed manifest.
+    manifest = _minimal_manifest()
+    client.install_app(manifest, key=new_idempotency_key())
+    resp = client.ensure_session({"app": manifest["name"], "name": "conf-" + new_idempotency_key()})
     assert resp.status_code in (200, 201), f"ensure returned {resp.status_code}: {resp.text}"
     body = resp.json()
     schemas.assert_valid(schemas.component_validator("Session"), body, "Session")
@@ -128,8 +133,10 @@ def ensure_and_get(client, config, advertised):
 
 @case("core.ensure_idempotent")
 def ensure_idempotent(client, config, advertised):
+    manifest = _minimal_manifest()
+    client.install_app(manifest, key=new_idempotency_key())
     key = new_idempotency_key()
-    body = {"app": "pi", "name": "idem-" + key}
+    body = {"app": manifest["name"], "name": "idem-" + key}
     first = client.ensure_session(body, key=key)
     second = client.ensure_session(body, key=key)
     assert first.status_code in (200, 201) and second.status_code in (200, 201)
