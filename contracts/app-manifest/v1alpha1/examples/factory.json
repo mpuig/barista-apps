@@ -1,0 +1,67 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "factory",
+  "version": "0.1.0",
+  "description": "Durable coordinator/worker fan-out app.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-factory:0.1.0",
+    "digest": "sha256:3b1c2d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff001",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/app/coordinator"],
+    "working_dir": "/work",
+    "readiness": {
+      "type": "log_line",
+      "log_pattern": "coordinator ready",
+      "timeout_seconds": 30
+    }
+  },
+  "endpoints": [
+    {
+      "name": "status",
+      "protocol": "http",
+      "port": 8080,
+      "path": "/status"
+    }
+  ],
+  "capabilities": {
+    "required": [
+      { "capability": "session.fork" }
+    ],
+    "optional": [
+      { "capability": "capsule.export" }
+    ]
+  },
+  "permissions": {
+    "actions": [
+      "session.create",
+      "session.get",
+      "session.list",
+      "session.delete",
+      "session.exec",
+      "session.events",
+      "session.fork",
+      "artifact.read",
+      "artifact.write"
+    ],
+    "network": {
+      "egress": "allowlist",
+      "allow": ["ntfy.sh:443"]
+    },
+    "secrets": [
+      { "name": "NOTIFY_TOKEN", "ref": "secret://factory/notify-token" }
+    ],
+    "artifacts": { "read": true, "write": true },
+    "child_sessions": { "max_concurrent": 8, "max_total": 64 },
+    "degraded_modes": [
+      { "name": "no-capsule-harvest", "without": ["capsule.export"] }
+    ]
+  },
+  "state_transfer": {
+    "exact": true
+  },
+  "metadata": {
+    "sh.barista.factory": {
+      "worker_template": "factory"
+    }
+  }
+}

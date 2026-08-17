@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/host-api/v1alpha1/event.schema.json",
+  "title": "Barista Host API Event",
+  "description": "Payload of a Server-Sent Event on a session event stream. The SSE `id` field carries the cursor; reconnect with Last-Event-ID to resume without gaps or duplicates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cursor", "type", "session_id", "time"],
+  "properties": {
+    "cursor": {
+      "description": "Stable, monotonic, opaque cursor. Equals the SSE id field.",
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "session.state_changed",
+        "operation.updated",
+        "exec.stdout",
+        "exec.stderr",
+        "exec.exit",
+        "artifact.registered",
+        "lineage.changed"
+      ]
+    },
+    "session_id": { "type": "string" },
+    "operation_id": { "type": "string" },
+    "time": { "type": "string", "format": "date-time" },
+    "data": {
+      "description": "Type-specific payload. Byte streams (exec.stdout/stderr) carry base64 in `data.chunk`.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

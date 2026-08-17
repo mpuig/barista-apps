@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/semantic-state/v1alpha1/schema.json",
+  "title": "Barista Semantic State Bundle",
+  "description": "Adapter-produced semantic continuation bundle for a session (used by semantic Lift). Media type: application/vnd.barista.semantic-state.v1alpha1+json. Preserves harness-native state as OPAQUE attachments with media types; the host never normalizes it away.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "adapter", "created_at", "inventory"],
+  "properties": {
+    "schema_version": { "const": "v1alpha1" },
+    "adapter": {
+      "description": "Adapter namespace that produced this bundle (e.g. sh.barista.adapter.pi).",
+      "type": "string"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "fidelity": {
+      "description": "Honest report of what the semantic export could and could not preserve.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["exact", "high", "partial", "low"]
+        },
+        "notes": { "type": "string" },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["workspace", "vcs", "transcript", "skills", "tools", "environment", "continuation_prompt"]
+          }
+        }
+      }
+    },
+    "inventory": {
+      "description": "Common, provider-neutral inventory. Any component may be absent and reported in fidelity.missing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": { "$ref": "#/$defs/attachment" },
+        "vcs": { "$ref": "#/$defs/attachment" },
+        "transcript": { "$ref": "#/$defs/attachment" },
+        "skills": { "$ref": "#/$defs/attachment" },
+        "tools": { "$ref": "#/$defs/attachment" },
+        "environment": {
+          "description": "Non-secret environment only; secret values are never included.",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "continuation_prompt": { "type": "string" }
+      }
+    },
+    "native": {
+      "description": "Opaque harness-native attachments preserved verbatim.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/attachment" }
+    }
+  },
+  "$defs": {
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_type", "digest", "size_bytes"],
+      "properties": {
+        "name": { "type": "string" },
+        "media_type": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha(256|512):[0-9a-f]{64,128}$"
+        },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "unknown-cap-app",
+  "version": "0.1.0",
+  "workload": {
+    "image": "example/app",
+    "digest": "sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    "architectures": ["aarch64"],
+    "entrypoint": ["/app/run"],
+    "readiness": { "type": "none" }
+  },
+  "capabilities": {
+    "required": [ { "capability": "session.teleport" } ]
+  }
+}

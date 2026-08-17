@@ -1,10 +1,10 @@
 ## 1. Repository and contract foundations
 
-- [ ] 1.1 Establish the monorepo package boundaries under `contracts/`, `sdks/`, `providers/local/`, `conformance/`, and `apps/` with independent version metadata.
-- [ ] 1.2 Define and validate the `v1alpha1` App Manifest JSON Schema, canonical examples, media type, capability/permission vocabulary, and digest rules.
-- [ ] 1.3 Define the `v1alpha1` Host API OpenAPI contract plus SSE cursor and WebSocket attach frame schemas, standard errors, profiles, and extension namespace.
-- [ ] 1.4 Define canonical Session Story and semantic-state bundle schemas, media types, digest rules, and redaction-policy versioning.
-- [ ] 1.5 Add compatibility/golden tests for deterministic schemas, manifests, stories, errors, and content identities.
+- [x] 1.1 Establish the monorepo package boundaries under `contracts/`, `sdks/`, `providers/local/`, `conformance/`, and `apps/` with independent version metadata.
+- [x] 1.2 Define and validate the `v1alpha1` App Manifest JSON Schema, canonical examples, media type, capability/permission vocabulary, and digest rules.
+- [x] 1.3 Define the `v1alpha1` Host API OpenAPI contract plus SSE cursor and WebSocket attach frame schemas, standard errors, profiles, and extension namespace.
+- [x] 1.4 Define canonical Session Story and semantic-state bundle schemas, media types, digest rules, and redaction-policy versioning.
+- [x] 1.5 Add compatibility/golden tests for deterministic schemas, manifests, stories, errors, and content identities.
 
 ## 2. Provider conformance
 
