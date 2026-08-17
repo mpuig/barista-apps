@@ -16,12 +16,12 @@
 
 ## 3. Local Host API provider
 
-- [ ] 3.1 Implement the core Host API over a configured loopback/Unix-socket Barista Node Agent with local durable metadata and artifact storage.
-- [ ] 3.2 Add local OS-user authority, user-owned socket defaults, explicit authenticated remote opt-in, and no multi-tenant claims.
-- [ ] 3.3 Translate actual Node/runtime/configuration capabilities into Host API profiles and standard errors.
-- [ ] 3.4 Implement local app install/validate, session handles, idempotent operations, event cursor persistence, artifact retention, and restart recovery.
+- [x] 3.1 Implement the core Host API over a configured loopback/Unix-socket Barista Node Agent with local durable metadata and artifact storage.
+- [x] 3.2 Add local OS-user authority, user-owned socket defaults, explicit authenticated remote opt-in, and no multi-tenant claims.
+- [x] 3.3 Translate actual Node/runtime/configuration capabilities into Host API profiles and standard errors.
+- [x] 3.4 Implement local app install/validate, session handles, idempotent operations, event cursor persistence, artifact retention, and restart recovery.
 - [ ] 3.5 Add optional local fork/capsule/grant profiles only after the pinned kernel passes their integration tests.
-- [ ] 3.6 Pass the core conformance and restart/recovery tests with Barista Cloud blocked.
+- [x] 3.6 Pass the core conformance and restart/recovery tests with Barista Cloud blocked.
 
 ## 4. SDK and adapter framework
 
