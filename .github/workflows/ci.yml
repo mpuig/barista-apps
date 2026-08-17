@@ -91,3 +91,15 @@ jobs:
       - name: Adapter tests (offline)
         working-directory: apps/${{ matrix.adapter }}
         run: uv run --extra test pytest -q
+
+  factory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Factory tests (offline, local + cloud-shaped)
+        working-directory: apps/factory
+        run: uv run --extra test pytest -q

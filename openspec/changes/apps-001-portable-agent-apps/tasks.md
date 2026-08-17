@@ -40,11 +40,11 @@
 
 ## 6. Factory app
 
-- [ ] 6.1 Port the coordinator, mission schema, status, receipts, notifications, and worker lifecycle into `apps/factory` using only Host API/SDK calls.
-- [ ] 6.2 Replace tenant API key inheritance with mission-scoped delegated grants and enforce repository, adapter, secret, egress, concurrency, attempt, deadline, and budget limits.
-- [ ] 6.3 Implement idempotent ensure/recovery so coordinator restart never duplicates an accepted worker attempt.
-- [ ] 6.4 Register receipts/artifacts before successful worker deletion and preserve failed-worker or failed-capsule forensics according to mission policy.
-- [ ] 6.5 Pass one deterministic multi-worker mission locally with Cloud blocked and the same mission against the Cloud provider.
+- [x] 6.1 Port the coordinator, mission schema, status, receipts, notifications, and worker lifecycle into `apps/factory` using only Host API/SDK calls.
+- [x] 6.2 Replace tenant API key inheritance with mission-scoped delegated grants and enforce repository, adapter, secret, egress, concurrency, attempt, deadline, and budget limits.
+- [x] 6.3 Implement idempotent ensure/recovery so coordinator restart never duplicates an accepted worker attempt.
+- [x] 6.4 Register receipts/artifacts before successful worker deletion and preserve failed-worker or failed-capsule forensics according to mission policy.
+- [x] 6.5 Pass one deterministic multi-worker mission locally with Cloud blocked and the same mission against the Cloud provider.
 
 ## 7. Lift app
 
