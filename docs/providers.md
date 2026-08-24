@@ -35,7 +35,7 @@ contract.
 | `session.snapshot.exact` | exact (memory) snapshot |
 | `session.fork` | branch exact state into a new session |
 | `capsule.export` / `capsule.import` | portable capsule transfer |
-| `grants.delegated` | mint scoped delegated grants |
+| `grants.delegated` | mint scoped delegated grants, **and let a session refresh the one it holds** (`POST /v1alpha1/grants/refresh`) — a grant that cannot be refreshed dies a quarter of an hour into an hour-long mission, so there is no separate capability for it |
 | `story.publish` | publish a redacted Session Story |
 | `branch.evaluation` | fork fan-out with result receipts |
 

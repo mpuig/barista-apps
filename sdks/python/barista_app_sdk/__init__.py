@@ -17,7 +17,7 @@ from __future__ import annotations
 from . import adapters, attach, errors, sensitive
 from .client import BaristaClient
 from .config import Config
-from .models import Artifact, Discovery, Event, ExecHandle, Operation, Session
+from .models import Artifact, Discovery, Event, ExecHandle, Grant, Operation, Session
 
 __version__ = "0.1.0a1"
 
@@ -30,6 +30,7 @@ __all__ = [
     "ExecHandle",
     "Artifact",
     "Event",
+    "Grant",
     "errors",
     "sensitive",
     "adapters",

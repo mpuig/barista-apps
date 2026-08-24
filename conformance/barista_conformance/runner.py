@@ -50,7 +50,10 @@ def run_conformance(
             "endpoint": config.endpoint,
             "standalone": config.standalone,
             # Recorded because it decides whether the delegated-authority cases
-            # could run at all: without it they skip, and a skip never certifies.
+            # could run at all: without credentials they skip, and a skip never
+            # certifies. `delegated_credentials` is filled in after the run with
+            # how the suite came by them — operator-supplied, acquired through
+            # the contract, or not at all.
             "delegated_probe": config.delegated_probe is not None,
         },
     )
@@ -103,5 +106,13 @@ def run_conformance(
                         message=f"{type(exc).__name__}: {exc}",
                     )
                 )
+
+        if config.acquired is not None:
+            report.environment["delegated_credentials"] = config.acquired.reason
+            # Sessions the suite stood up are sacrificial: it rotated the grants
+            # their own workloads were given. Delete them.
+            cases_module.release_delegated(client, config)
+        else:
+            report.environment["delegated_credentials"] = "none needed (profile not advertised)"
 
     return report

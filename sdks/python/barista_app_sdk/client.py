@@ -18,7 +18,7 @@ import httpx
 from . import errors
 from .attach import AttachFrame
 from .config import Config
-from .models import Artifact, Discovery, Event, ExecHandle, Operation, Session
+from .models import Artifact, Discovery, Event, ExecHandle, Grant, Operation, Session
 
 BASE = "/v1alpha1"
 MANIFEST_MEDIA_TYPE = "application/vnd.barista.app-manifest.v1alpha1+json"
@@ -45,6 +45,11 @@ class BaristaClient:
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
         self._discovery: Optional[Discovery] = None
+        # Bumped whenever the credential is replaced. A request that was in
+        # flight across a rotation sees a 401 for a credential that was valid
+        # when it was sent; comparing generations tells that apart from a
+        # credential that is genuinely dead.
+        self._credential_generation = 0
 
     @classmethod
     def from_env(cls, **kw: Any) -> "BaristaClient":
@@ -83,6 +88,7 @@ class BaristaClient:
         attempt = 0
         while True:
             attempt += 1
+            generation = self._credential_generation
             try:
                 resp = self._http.request(
                     method, path, json=json_body, content=content, headers=hdrs, params=params
@@ -96,6 +102,18 @@ class BaristaClient:
 
             if resp.status_code in expected:
                 return resp
+
+            if (
+                resp.status_code == 401
+                and self._credential_generation != generation
+                and attempt <= self._max_retries
+            ):
+                # The credential rotated while this request was in flight. There
+                # is no overlap window by design — the old secret stops working
+                # the instant the new one is issued — so a request that raced the
+                # rotation is retried with the new credential. A 401 the server
+                # answered means it did nothing, so this is safe without a key.
+                continue
 
             err = errors.from_response(resp.status_code, _safe_json(resp))
             # Retry only the transient class, and only with a stable key.
@@ -248,6 +266,37 @@ class BaristaClient:
             # one or two polls, but a long-running one stops hammering the gateway
             # (a 50ms fixed poll is ~20 req/s per in-flight operation).
             interval = min(interval * 2, max_poll)
+
+    # -- delegated grants ------------------------------------------------- #
+    def set_credential(self, secret: str) -> None:
+        """Present ``secret`` as the bearer credential from now on.
+
+        Rotation has no overlap window: the previous secret stops working the
+        instant the replacement is issued. Requests already in flight are handled
+        by ``_request``, which retries a 401 whose credential changed underneath
+        it rather than reporting authority it still has as authority lost.
+        """
+        self._http.headers["authorization"] = f"Bearer {secret}"
+        self._credential_generation += 1
+
+    def refresh_grant(self) -> Grant:
+        """Refresh the delegated grant this client authenticates with, and start
+        presenting the replacement.
+
+        Requires ``grants.delegated``. The credential is the subject: there is
+        nothing to pass, and nothing that could widen the result.
+
+        **Not retried, deliberately.** The operation takes no idempotency key
+        because a replayable rotation would mean the provider keeping a second
+        live copy of a credential, so a blind retry after a lost response would
+        rotate again from a secret that no longer works. Losing this response is
+        losing the authority — refresh with enough margin that there is time to
+        report it and be re-provisioned.
+        """
+        resp = self._request("POST", f"{BASE}/grants/refresh", expected=(200,))
+        grant = Grant.parse(resp.json())
+        self.set_credential(grant.secret)
+        return grant
 
     # -- artifacts -------------------------------------------------------- #
     def register_artifact(

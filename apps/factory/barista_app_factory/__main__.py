@@ -15,6 +15,21 @@ from barista_app_sdk import BaristaClient, Config
 from .coordinator import Coordinator
 from .mission import Mission
 
+#: The mission did not finish and no task is to blame: the coordinator lost the
+#: authority to act. An operator problem, not a task problem — hence its own
+#: code, distinct from 1 ("some task failed").
+EXIT_LOST_AUTHORITY = 3
+
+
+def exit_code_for(state) -> int:
+    """Three outcomes, three exit codes, because they send someone to three
+    different places: the work is fine (0), a task is broken (1), or the
+    coordinator was not allowed to act (3). Reporting a lapsed credential as
+    failed work would have someone debugging a task that never ran."""
+    if state.authority_lost:
+        return EXIT_LOST_AUTHORITY
+    return 0 if state.summary()["failed"] == 0 else 1
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="barista-factory")
@@ -39,8 +54,13 @@ def main(argv: list[str] | None = None) -> int:
         state = coordinator.run()
 
     summary = state.summary()
-    print(json.dumps({"mission": mission.name, "state": state.state, **summary}, indent=1))
-    return 0 if summary["failed"] == 0 else 1
+    result = {"mission": mission.name, "state": state.state, **summary}
+    if state.credential:
+        result["credential"] = state.credential
+    if state.authority_lost:
+        result["lost_authority"] = state.authority_lost
+    print(json.dumps(result, indent=1))
+    return exit_code_for(state)
 
 
 if __name__ == "__main__":

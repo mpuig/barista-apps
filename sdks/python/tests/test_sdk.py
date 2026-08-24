@@ -275,3 +275,127 @@ def test_wait_operation_backs_off(monkeypatch):
     client.wait_operation("op-x", timeout=100)
     assert sleeps == sorted(sleeps) and sleeps[0] < sleeps[-1]  # backoff, not flat
     client.close()
+
+
+# --------------------------------------------------------------------------- #
+# Delegated grant refresh (apps-003)
+# --------------------------------------------------------------------------- #
+def _grant_provider(**kw) -> tuple[MockProvider, dict]:
+    manifest = json.loads(
+        (REPO / "contracts" / "app-manifest" / "v1alpha1" / "examples" / "factory.json").read_text()
+    )
+    provider = MockProvider(
+        name="granter", capabilities=["grants.delegated"], child_authority=True, **kw
+    )
+    return provider, provider.provision_delegated_probe(manifest)
+
+
+def test_refresh_grant_rotates_the_clients_own_credential():
+    """The credential is the subject of its own refresh, so the client that used
+    the old secret must be using the new one afterwards — without the caller
+    plumbing it through by hand."""
+    from barista_app_sdk import BaristaClient, Config
+
+    provider, probe = _grant_provider()
+    old = probe["coordinator_token"]
+    with BaristaClient(
+        Config(endpoint="http://granter.invalid", token=old), transport=provider.transport()
+    ) as client:
+        grant = client.refresh_grant()
+        assert grant.secret and grant.secret != old
+        assert grant.resource == f"session:{probe['coordinator_session_id']}"
+        assert "session.get" in grant.actions  # the presented grant's own actions
+        assert grant.expires_at_epoch() > time.time()
+        assert client._http.headers["authorization"] == f"Bearer {grant.secret}"
+        # And the client keeps working with the replacement, while the secret it
+        # replaced is gone from the provider entirely.
+        assert client.get_session(probe["coordinator_session_id"]).id
+        assert old not in provider.principals
+
+
+def test_a_refresh_is_never_retried_blind():
+    """There is no idempotency key on refresh, so a lost response must not be
+    replayed: the second attempt would rotate from a secret that no longer works.
+    A caller that loses it has lost its authority, loudly."""
+    from barista_app_sdk import BaristaClient, Config, errors
+
+    provider, probe = _grant_provider()
+    attempts = {"n": 0}
+
+    class LosesTheResponse(httpx.BaseTransport):
+        def __init__(self, inner):
+            self._inner = inner
+
+        def handle_request(self, request):
+            if request.url.path.endswith("/grants/refresh"):
+                attempts["n"] += 1
+                raise httpx.ConnectError("response lost", request=request)
+            return self._inner.handle_request(request)
+
+    with BaristaClient(
+        Config(endpoint="http://granter.invalid", token=probe["coordinator_token"]),
+        transport=LosesTheResponse(provider.transport()),
+    ) as client:
+        with pytest.raises(errors.UnavailableError):
+            client.refresh_grant()
+    assert attempts["n"] == 1, "a refresh whose response was lost must not be replayed"
+
+
+def test_a_request_that_raced_a_rotation_is_retried_not_reported_as_lost_authority():
+    """Rotation has no overlap window by design: the old secret dies the instant
+    the new one is issued. A request already in flight would come back 401 for a
+    credential that was valid when it was sent — which must not be mistaken for a
+    credential the provider no longer accepts."""
+    from barista_app_sdk import BaristaClient, Config
+
+    provider, probe = _grant_provider()
+    with BaristaClient(
+        Config(endpoint="http://granter.invalid", token=probe["coordinator_token"]),
+        transport=provider.transport(),
+    ) as client:
+        seen = {"n": 0}
+        real = client._http.request
+
+        def rotate_mid_flight(method, path, **kw):
+            seen["n"] += 1
+            if seen["n"] == 1:
+                # Something else rotated the credential while this was in flight;
+                # the server answers 401 to the secret this request carried.
+                client.refresh_grant()
+                return httpx.Response(
+                    401,
+                    json={
+                        "class": "authentication",
+                        "code": "authentication.credential_not_accepted",
+                        "message": "replaced by a refresh",
+                    },
+                )
+            return real(method, path, **kw)
+
+        client._http.request = rotate_mid_flight
+        session = client.get_session(probe["coordinator_session_id"])
+        assert session.id == probe["coordinator_session_id"]
+        assert seen["n"] >= 2, "the raced request was not retried"
+
+
+def test_refresh_needs_a_grant_not_a_tenant_key():
+    """A tenant credential holds authority directly: there is nothing to rotate,
+    and answering it would make refresh a way to obtain delegated authority."""
+    from barista_app_sdk import BaristaClient, Config, errors
+
+    provider, _ = _grant_provider()
+    with BaristaClient(
+        Config(endpoint="http://granter.invalid"), transport=provider.transport()
+    ) as client:
+        with pytest.raises(errors.AuthorizationError):
+            client.refresh_grant()
+
+
+def test_refresh_on_a_provider_without_the_capability_is_a_capability_error():
+    from barista_app_sdk import BaristaClient, Config, errors
+
+    with BaristaClient(
+        Config(endpoint="http://plain.invalid"), transport=MockProvider(name="plain").transport()
+    ) as client:
+        with pytest.raises(errors.CapabilityError):
+            client.refresh_grant()

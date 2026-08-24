@@ -16,8 +16,9 @@ from typing import Optional
 
 from barista_app_sdk import BaristaClient
 from barista_app_sdk.content import canonical_bytes, content_id
-from barista_app_sdk.errors import HostAPIError
+from barista_app_sdk.errors import AuthenticationError, HostAPIError
 
+from .credential import CredentialKeeper, LostAuthority
 from .grants import derive_worker_grant
 from .mission import Mission, Task
 from .state import MissionState, TaskState
@@ -26,11 +27,21 @@ RECEIPT_MEDIA_TYPE = "application/vnd.barista.factory.receipt+json"
 
 
 class Coordinator:
-    def __init__(self, client: BaristaClient, mission: Mission, state_path: str | Path):
+    def __init__(
+        self,
+        client: BaristaClient,
+        mission: Mission,
+        state_path: str | Path,
+        *,
+        credential: Optional[CredentialKeeper] = None,
+    ):
         self.client = client
         self.mission = mission
         self.state = MissionState.open(state_path, mission.name, [t.id for t in mission.tasks])
         self.grant = derive_worker_grant(mission.permissions)
+        # The coordinator's own credential outlives one grant lifetime only if
+        # something refreshes it. Injectable so a test can drive the clock.
+        self.credential = credential if credential is not None else CredentialKeeper(client)
 
     # -- durable coordinator scope --------------------------------------- #
     def _ensure_coordinator_session(self) -> str:
@@ -50,11 +61,33 @@ class Coordinator:
     def _worker_name(self, task: Task) -> str:
         return f"{self.mission.name}-{task.id}"
 
+    # -- authority -------------------------------------------------------- #
+    def _checkpoint_authority(self) -> None:
+        """Refresh the credential if it is due, and surface a loss as a loss.
+
+        Called at the points where the coordinator is about to need authority.
+        The keeper's ticker covers the gaps *inside* a long call — a task with an
+        hour's timeout outlives a fifteen-minute grant without ever reaching one
+        of these checkpoints — and this is where its verdict is read.
+        """
+        if self.credential.lost_authority:
+            raise LostAuthority(self.credential.lost_authority)
+        self.credential.ensure_fresh()
+
+    def _record_lost_authority(self, reason: str) -> None:
+        with self.state.lock:
+            self.state.state = "lost_authority"
+            self.state.authority_lost = reason
+            self.state.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            self.state.credential = self.credential.status()
+            self.state.save()
+
     # -- one task --------------------------------------------------------- #
     def run_task(self, task: Task) -> None:
         ts = self.state.tasks[task.id]
         if ts.state == "ok":
             return  # already harvested; restart must not re-run it
+        self._checkpoint_authority()
 
         # Recovery must re-ensure the SAME worker, not start a new attempt: only
         # a genuinely new run increments the attempt counter. A task found mid
@@ -93,6 +126,9 @@ class Coordinator:
 
         ts.exit_code = exit_code
         if ok:
+            # The most expensive moment to lose authority: the work is done and
+            # the receipt is not yet durable. Refresh first if the margin is up.
+            self._checkpoint_authority()
             self._harvest_then_reap(task, worker.id, exit_code, checks)
         else:
             # Failed workers are NOT reaped: they stay for bounded forensics.
@@ -153,7 +189,21 @@ class Coordinator:
 
     # -- whole mission ---------------------------------------------------- #
     def run(self) -> MissionState:
-        self._ensure_coordinator_session()
+        with self.credential.running():
+            self._run_inside_credential()
+        self._notify()
+        return self.state
+
+    def _run_inside_credential(self) -> None:
+        try:
+            self._ensure_coordinator_session()
+        except LostAuthority as exc:
+            self._record_lost_authority(str(exc))
+            return
+        except AuthenticationError as exc:
+            self._record_lost_authority(self._authentication_reason(exc))
+            return
+
         pending = [t for t in self.mission.tasks if self.state.tasks[t.id].state != "ok"]
         deadline = time.time() + self.mission.deadline_s if self.mission.deadline_s else None
 
@@ -162,25 +212,61 @@ class Coordinator:
             for task in pending:
                 if deadline and time.time() > deadline:
                     break
+                if self.state.authority_lost:
+                    # Submitting more work would only produce more refusals, and
+                    # every one of them would look like a task that failed.
+                    break
                 futures[pool.submit(self._guarded, task)] = task
             for fut in concurrent.futures.as_completed(futures):
                 fut.result()
 
+        self.state.credential = self.credential.status()
+        if self.state.authority_lost:
+            # Not 'done', and emphatically not 'failed': the work is unfinished,
+            # and unfinished is not the same as attempted and refused.
+            self.state.save()
+            return
         if all(t.state in ("ok", "failed") for t in self.state.tasks.values()):
             self.state.state = "done"
             self.state.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            self.state.save()
-        self._notify()
-        return self.state
+        self.state.save()
+
+    @staticmethod
+    def _authentication_reason(exc: AuthenticationError) -> str:
+        return (
+            "the provider no longer accepts the coordinator's credential "
+            f"({exc.code or exc.status}): {exc}. A delegated grant that has lapsed cannot "
+            "be refreshed, so a new one must be provisioned"
+        )
 
     def _guarded(self, task: Task) -> None:
+        ts = self.state.tasks[task.id]
         try:
             self.run_task(task)
+        except LostAuthority as exc:
+            self._blame_the_operator(ts, str(exc))
+        except AuthenticationError as exc:
+            # The credential itself is not accepted. Distinct from an
+            # AuthorizationError, which means the credential is live and the
+            # action was refused — that is a permissions bug in the mission, and
+            # it stays a task failure below.
+            self._blame_the_operator(ts, self._authentication_reason(exc))
         except Exception as exc:  # noqa: BLE001 - record, never crash the whole mission
-            ts = self.state.tasks[task.id]
             ts.state = "failed"
             ts.receipt = {"error": f"{type(exc).__name__}: {exc}"}
             self.state.save()
+
+    def _blame_the_operator(self, ts: TaskState, reason: str) -> None:
+        """Record lost authority without blaming the task.
+
+        A task the coordinator could not act on has learned nothing about
+        itself. Leaving it 'running' would suggest a worker still going, and
+        marking it 'failed' would send someone to debug work that never ran — so
+        it goes back to 'pending', which is what it is.
+        """
+        if ts.state == "running":
+            ts.state = "pending"
+        self._record_lost_authority(reason)
 
     def _notify(self) -> None:
         url = self.mission.notify_url
@@ -188,6 +274,9 @@ class Coordinator:
             return
         summary = self.state.summary()
         msg = f"factory {self.mission.name}: {summary['ok']}/{summary['total']} ok, {summary['failed']} failed"
+        if self.state.authority_lost:
+            # Whoever reads this must be sent to the credential, not to the work.
+            msg += f", LOST AUTHORITY ({summary['pending']} not attempted): {self.state.authority_lost}"
         try:
             import urllib.request
 

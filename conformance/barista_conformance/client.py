@@ -118,6 +118,19 @@ class HostAPIClient:
     def list_artifacts(self, session_id: str) -> httpx.Response:
         return self._client.get(f"{BASE}/sessions/{session_id}/artifacts")
 
+    # -- grants ----------------------------------------------------------- #
+    def refresh_grant(self, body: Optional[Any] = None) -> httpx.Response:
+        """Refresh the delegated grant this client is authenticated with.
+
+        The credential IS the subject: there is no grant id to pass. ``body``
+        exists only so a case can prove that a scope in the request is ignored —
+        the contract declares no request body at all, and a provider that reads
+        one has implemented issuance.
+        """
+        if body is None:
+            return self._client.post(f"{BASE}/grants/refresh")
+        return self._client.post(f"{BASE}/grants/refresh", json=body)
+
     # -- operations ------------------------------------------------------- #
     def get_operation(self, operation_id: str) -> httpx.Response:
         return self._client.get(f"{BASE}/operations/{operation_id}")
