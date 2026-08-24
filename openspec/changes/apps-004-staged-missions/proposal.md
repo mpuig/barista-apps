@@ -47,10 +47,15 @@ treats as given. So they ship together.
   along, which is sequencing in name only. The bytes already exist — Factory
   registers each task's output as an artifact on the durable coordinator scope
   *before* reaping the worker, precisely so they outlive it.
-- **`files`: planted inputs the worker cannot author.** Content placed into a
-  worker's session before its command runs, by the coordinator. A check's argv may
-  reference **only** planted paths or paths a dependency produced, so the thing
-  being judged can no longer write its own judge.
+- **`files`: planted inputs, re-asserted before the check.** Content placed into
+  a worker's session before its command runs, and re-placed (by digest, so a
+  no-op when untouched) between the command and the check. A worker that
+  overwrote the criterion has the mission's version restored before it is judged.
+- **`strict_gates`: an opt-in load-time rule** that a check may name only planted
+  or consumed paths. Opt-in because an argv path may be a *location* rather than
+  a criterion — `git -C /work diff --quiet` is sound and indistinguishable, by
+  shape, from a forged gate. Design D3 records that the always-on version of this
+  rule refused this repo's own example mission.
 
 Everything stays inside `apps/factory` and its mission schema. No Host API
 change, no manifest change, no new capability.
@@ -68,10 +73,12 @@ change, no manifest change, no new capability.
 
 ## Impact
 
-- **Schema**: three additive task properties (`depends_on`, `produces`/`consumes`,
-  `files`). Every existing mission stays valid and behaves identically — a
-  mission with no `depends_on` is one stage of everything, which is exactly
-  today's semantics. `example.json` and `e2e-wave.json` keep working unchanged.
+- **Schema**: four additive task properties (`depends_on`, `produces`,
+  `consumes`, `files`) and one mission property (`strict_gates`). Every existing
+  mission stays valid and behaves identically — a mission with no `depends_on` is
+  one stage of everything, which is exactly today's semantics, and `strict_gates`
+  defaults off. `example.json` keeps working unchanged, and there is now a test
+  asserting it does, because the first draft of the gate rule broke it.
 - **Coordinator**: scheduling becomes a ready-set loop instead of one bulk
   submit. Restart behaviour is unchanged and still keyed on the same idempotency
   keys; a task whose dependency is not yet `ok` is simply not ready, which is a

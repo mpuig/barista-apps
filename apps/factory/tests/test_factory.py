@@ -177,6 +177,156 @@ def test_budget_caps_worker_count(tmp_path):
     assert "max_workers" in str(ei.value)
 
 
+# -- apps-004: the graph, refused at load ----------------------------------- #
+def _graph_mission(**overrides):
+    """A mission whose tasks are given explicitly, so a test can shape the graph."""
+    data = {"name": "chain", "app": WORKER_MANIFEST["name"]}
+    data.update(overrides)
+    return Mission.load(data)
+
+
+def _strict_mission(**overrides):
+    """The same, with the opt-in gate rule on."""
+    return _graph_mission(strict_gates=True, **overrides)
+
+
+def test_a_dependency_cycle_is_refused_and_the_cycle_is_named():
+    with pytest.raises(MissionError) as ei:
+        _graph_mission(tasks=[
+            {"id": "a", "command": ["true"], "depends_on": ["c"]},
+            {"id": "b", "command": ["true"], "depends_on": ["a"]},
+            {"id": "c", "command": ["true"], "depends_on": ["b"]},
+        ])
+    msg = str(ei.value)
+    assert "cycle" in msg
+    # The cycle itself, not just its existence: an operator with a forty-task
+    # mission needs to be told which three tasks to look at.
+    assert "a" in msg and "b" in msg and "c" in msg
+
+
+def test_a_self_edge_is_refused():
+    with pytest.raises(MissionError) as ei:
+        _graph_mission(tasks=[{"id": "a", "command": ["true"], "depends_on": ["a"]}])
+    assert "itself" in str(ei.value) and "'a'" in str(ei.value)
+
+
+def test_a_dependency_on_an_unknown_task_is_refused_and_named():
+    with pytest.raises(MissionError) as ei:
+        _graph_mission(tasks=[{"id": "a", "command": ["true"], "depends_on": ["ghost"]}])
+    assert "ghost" in str(ei.value)
+
+
+def test_consuming_an_output_nobody_produces_is_refused():
+    with pytest.raises(MissionError) as ei:
+        _graph_mission(tasks=[{"id": "a", "command": ["true"], "consumes": {"spec": "/w/s"}}])
+    assert "spec" in str(ei.value) and "no task produces" in str(ei.value)
+
+
+def test_consuming_from_a_task_not_depended_on_is_refused_as_a_race():
+    """Produced somewhere, but nothing orders the producer first. Refusing this
+    is the difference between a data flow and a race that passes in testing."""
+    with pytest.raises(MissionError) as ei:
+        _graph_mission(tasks=[
+            {"id": "a", "command": ["true"], "produces": {"spec": "/w/spec.md"}},
+            {"id": "b", "command": ["true"], "consumes": {"spec": "/w/spec.md"}},
+        ])
+    msg = str(ei.value)
+    assert "does not" in msg and "depend" in msg and "'a'" in msg
+
+
+def test_a_deep_chain_is_accepted_rather_than_exhausting_the_stack():
+    """Mission data comes from outside, so its depth is not ours to trust. A
+    RecursionError here would be an error about the interpreter rather than
+    about the mission."""
+    tasks = [{"id": "t0", "command": ["true"]}]
+    tasks += [{"id": f"t{i}", "command": ["true"], "depends_on": [f"t{i-1}"]} for i in range(1, 900)]
+    mission = _graph_mission(tasks=tasks)
+    assert len(mission.tasks) == 900
+
+
+# -- apps-004: a check the worker could have written ------------------------ #
+def test_a_check_reading_the_workers_own_output_is_refused():
+    """The shipped demo's shape: the agent writes both the implementation and
+    the test, and the check re-runs the test its own subject authored."""
+    with pytest.raises(MissionError) as ei:
+        _strict_mission(tasks=[{
+            "id": "fizz",
+            "prompt": "write fizz.js and fizz.test.js",
+            "check": ["node", "/work/fizz.test.js"],
+        }])
+    msg = str(ei.value)
+    assert "/work/fizz.test.js" in msg and "marking its own work" in msg
+
+
+def test_a_check_reading_a_planted_path_is_accepted():
+    mission = _strict_mission(tasks=[{
+        "id": "fizz",
+        "prompt": "write fizz.js",
+        "files": {"/work/fizz.test.js": "require('/work/fizz.js')"},
+        "check": ["node", "/work/fizz.test.js"],
+    }])
+    assert mission.tasks[0].fixed_paths() == {"/work/fizz.test.js"}
+
+
+def test_a_check_reading_a_consumed_path_is_accepted():
+    mission = _strict_mission(tasks=[
+        {"id": "spec", "command": ["true"], "produces": {"suite": "/work/suite.js"}},
+        {"id": "impl", "command": ["true"], "depends_on": ["spec"],
+         "consumes": {"suite": "/work/suite.js"}, "check": ["node", "/work/suite.js"]},
+    ])
+    assert mission.by_id()["impl"].fixed_paths() == {"/work/suite.js"}
+
+
+def test_the_check_program_itself_is_not_the_subject():
+    """argv[0] comes from the image, not the workspace. Refusing an absolute
+    interpreter path would break every check that names one."""
+    mission = _strict_mission(tasks=[{
+        "id": "t", "command": ["true"],
+        "files": {"/work/t.py": "assert True"},
+        "check": ["/usr/local/bin/python", "/work/t.py"],
+    }])
+    assert mission.tasks[0].check[0] == "/usr/local/bin/python"
+
+
+def test_a_check_naming_no_path_is_left_alone():
+    """`check: ["true"]` forges nothing. Existing missions must keep loading."""
+    mission = _strict_mission(tasks=[{"id": "t", "command": ["true"], "check": ["true"]}])
+    assert mission.tasks[0].check == ["true"]
+
+
+def test_planted_and_checked_paths_compare_after_normalisation():
+    mission = _strict_mission(tasks=[{
+        "id": "t", "command": ["true"],
+        "files": {"/work/t.js": "1"},
+        "check": ["node", "/work/./t.js"],
+    }])
+    assert mission.tasks[0].fixed_paths() == {"/work/t.js"}
+
+
+def test_the_gate_rule_is_opt_in_so_a_location_argument_is_not_mistaken_for_a_criterion():
+    """`git -C /work diff --quiet` names /work as the place to look; the criterion
+    is git's own notion of a clean tree. No syntactic rule can tell that from
+    `node /work/its-own-test.js`, so an always-on rule refuses sound missions —
+    this repo's own missions/example.json among them, which is how the earlier
+    always-on version of this rule was caught."""
+    mission = _graph_mission(tasks=[{
+        "id": "t", "prompt": "fix the typos and commit",
+        "check": ["git", "-C", "/work", "diff", "--quiet"],
+    }])
+    assert mission.strict_gates is False
+    with pytest.raises(MissionError):
+        _strict_mission(tasks=[{
+            "id": "t", "prompt": "fix the typos and commit",
+            "check": ["git", "-C", "/work", "diff", "--quiet"],
+        }])
+
+
+def test_the_shipped_example_mission_still_loads():
+    """The repo's own example is the regression guard for over-strictness."""
+    mission = Mission.load_file(REPO / "apps" / "factory" / "missions" / "example.json")
+    assert [t.id for t in mission.tasks] == ["t1", "t2"]
+
+
 def test_worker_grant_is_narrower_and_reference_only():
     grant = derive_worker_grant({"secrets": [{"name": "MODEL_API_KEY", "ref": "secret://m/k"}]})
     # A worker cannot create children.

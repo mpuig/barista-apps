@@ -72,45 +72,61 @@ output is described. `state.py`'s `TaskState` gains no result copy — it alread
 holds `receipt_artifact_id`, a *pointer*, which is precisely the shape bar-060 D3
 argued for and the reason `status.json` was deleted.
 
-## D3 — A check may reference only paths the worker did not author
+## D3 — Two mechanisms: re-assertion always, the argv rule on request
 
-This is the core of the change and the one rule worth stating precisely.
+This is the core of the change, and the first draft of it was wrong in a way
+worth recording, because the wrong version is the obvious one.
 
-**Rule.** Every argv element of `check` that resolves to a path inside the
-session MUST be either a planted `files` path or a path this task `consumes`
-from a dependency. A check referencing any other path is a **load-time refusal**,
-not a runtime failure — the mission is malformed, and the moment to say so is
-before any worker is created and any money is spent.
+**The draft.** Every argv element of `check` that names a path must be planted
+or consumed; anything else is a load-time refusal. It catches the motivating bug
+exactly — `node /work/fizz.test.js` where the worker wrote `fizz.test.js`.
 
-**Why load-time.** A runtime refusal arrives after the work ran, when the
-operator's attention is on the result and the natural reading of "check refused"
-is "the check is broken", not "this mission was never able to verify anything".
-Refusing at load makes the malformed mission unrunnable, which is the honest
-outcome.
+**Why it fails.** An argv element that names a path is not necessarily the
+criterion. This repo's own `missions/example.json` checks with
+`git -C /work diff --quiet`: `/work` is the *location* to inspect, and the
+criterion is git's own notion of a clean tree. That is a sound check, and the
+rule refused it — caught by running the rule against the repo's own example
+rather than only against the case it was designed for. Syntactically
+`git -C /work …` and `node /work/its-own-test.js` are the same shape, and no
+amount of cleverness separates them without a model of what each program does
+with its arguments. For a portable app, refusing valid missions to catch invalid
+ones is the wrong trade.
 
-**Why paths and not a sandbox rule.** The temptation is to make the check run
-somewhere the worker cannot reach. That is both harder (it needs a second
-session, restoring the state under test) and beside the point: the worker's disk
-is exactly where the artefact under test lives, and running the check elsewhere
-would mean transporting the thing being judged. What must be true is narrower —
-*the criterion* is not the worker's to write. Planting the criterion achieves
-that with no second session, and it is the same insight as writing the failing
-test first and committing it before the fix: the test that existed before, and
-that the agent could not rewrite, is the proof.
+**What actually defends, and needs no opt-in.** Planted content is **re-asserted
+immediately before the check runs**. The coordinator re-plants each `files` entry
+(addressed by digest, so it is a no-op when untouched) between the task's command
+and its check. A worker that overwrote the planted criterion has the mission's
+version restored before it is judged.
 
-**What it does not claim.** A worker can still, in principle, defeat a planted
-check by tampering with what the check reads rather than the check itself
-(replacing the module under test with a stub that satisfies it). This change does
-not close that and should not pretend to; the honest claim is narrower and still
-worth having — **the criterion is fixed by someone other than the party being
-judged**, which is the difference between evidence and self-assessment. Closing
-the remaining gap needs the check to run against a *restored* state the worker
-cannot mutate, and that is a different change.
+This is strictly stronger than the argv rule and has no false positives: it makes
+no claim about which argv element is the criterion, it just guarantees that
+planted content *is* the mission's. It also closes a hole the argv rule left open
+and that the first draft of this design admitted it could not close — a worker
+overwriting the planted file. The rule that survives is the runtime one.
+
+**The argv rule survives as opt-in.** `strict_gates: true` on the mission turns
+it on for every task. A mission that wants "no check in me reads anything the
+checked task could have written" can assert it and have it enforced at load,
+before a worker exists. Off by default, so `example.json` and every mission like
+it keeps working. argv[0] is exempt under the rule: it is the program being run —
+`node`, `pytest`, `/usr/local/bin/rspec` — which comes from the image, not the
+workspace, and is no more the subject of the check than the shell is.
+
+**What neither claims.** A worker can still defeat a planted check by tampering
+with what the check *reads* rather than the criterion itself — replacing the
+module under test with a stub that satisfies it. Nothing here closes that, and it
+should not be implied. The honest claim is narrower and still worth having: **the
+criterion is fixed by someone other than the party being judged**, which is the
+difference between evidence and self-assessment. And under `strict_gates`, a
+check that names a path burying it in a shell string (`sh -c "node t.js"`) has no
+argv element beginning with a slash and escapes the rule — a documented hole, not
+a solved one.
 
 **Prior art in this repo, deliberately mirrored.** apps-003's conformance work
 established that a test which cannot fail is not a test, by writing dishonest
 provider doubles and proving the suite catches them. This is the same standard
-applied to missions instead of providers.
+applied to missions instead of providers — and the reason the over-strict draft
+was caught is that it was run against a mission it was not designed for.
 
 ## D4 — Scheduling: a ready-set loop, not a topological batch
 

@@ -12,6 +12,11 @@
       "type": "string"
     },
     "concurrency": { "type": "integer", "minimum": 1, "default": 3 },
+    "strict_gates": {
+      "description": "Refuse, at load, any check that reads a path the checked task could have written. Opt-in: a check may legitimately name a path as a location rather than as a criterion (`git -C /work diff --quiet`), and no syntactic rule can tell those apart. Missions that want the guarantee ask for it.",
+      "type": "boolean",
+      "default": false
+    },
     "task_timeout_s": { "type": "integer", "minimum": 1, "default": 3600 },
     "max_attempts": { "type": "integer", "minimum": 1, "default": 1 },
     "deadline_s": { "type": "integer", "minimum": 1 },
@@ -66,7 +71,27 @@
           "check": { "type": "array", "items": { "type": "string" } },
           "collect": { "type": "boolean", "default": true },
           "env": { "type": "object", "additionalProperties": { "type": "string" } },
-          "workdir": { "type": "string" }
+          "workdir": { "type": "string" },
+          "depends_on": {
+            "description": "Task ids that must succeed before this task may start. Tasks that do not depend on one another still run concurrently, bounded by the mission's concurrency.",
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
+          },
+          "produces": {
+            "description": "Named outputs to capture from this task's session on success, so a dependent can receive them. name -> path in this task's session.",
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "consumes": {
+            "description": "Outputs produced by a task this one depends on, placed in this task's session before its command runs. output name -> path in this task's session.",
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "files": {
+            "description": "Content planted into this task's session before its command runs. path -> content. A check may reference only planted or consumed paths, so that the criterion a task is judged by is not written by the task being judged.",
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
         }
       }
     }

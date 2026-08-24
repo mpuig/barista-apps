@@ -52,28 +52,38 @@ before its consumer starts.
 - **WHEN** a task consumes an output that no task it depends on produces
 - **THEN** loading the mission fails, naming the task and the missing output, and no worker session is created
 
-### Requirement: A task's check SHALL NOT be authored by the task it judges
+### Requirement: A task SHALL be judged by a criterion it did not write
 
 Factory SHALL let a mission plant content into a worker's session before the
-worker's command runs. A task's check SHALL reference only planted content or
-content received from a task it depends on. A mission whose check references
-anything else SHALL be refused when the mission is loaded, before any worker is
-created.
+worker's command runs, and SHALL ensure the planted content is the mission's own
+when the task's check runs, whatever the worker did to it in between.
+
+A mission SHALL additionally be able to require that every check in it names
+only planted content or content received from a dependency, and such a mission
+SHALL be refused at load if any check names anything else. This requirement is
+one a mission opts into: a check may name a path as the location to inspect
+rather than as the criterion, and those two uses are not distinguishable by
+shape.
 
 The isolation a worker runs under bounds what its work can reach; it does not
 make the worker's own account of that work into evidence. A criterion fixed by
 the mission rather than by the worker is what makes a passing check mean
 something.
 
-#### Scenario: a check runs against a criterion the worker did not write
+#### Scenario: the check runs against the mission's criterion, not the worker's
 
-- **WHEN** a mission plants a check's input and the worker's command runs before that check
-- **THEN** the check executes against the planted content, and the worker's own writes do not replace it
+- **WHEN** a mission plants a check's input and the worker overwrites it before the check runs
+- **THEN** the check runs against the content the mission planted
 
-#### Scenario: a mission whose check judges the worker's own output is refused
+#### Scenario: a mission that requires self-authored checks to be impossible is refused when one is present
 
-- **WHEN** a task's check references a path that is neither planted nor received from a dependency
+- **WHEN** a mission requires that checks name only fixed content, and one of its checks names a path that is neither planted nor received from a dependency
 - **THEN** loading the mission fails, naming the task and the path, and no worker session is created
+
+#### Scenario: a mission that does not require it is not refused for naming a path
+
+- **WHEN** a mission does not require that checks name only fixed content, and a check names a path as the location it inspects
+- **THEN** the mission loads and runs
 
 #### Scenario: planting survives a coordinator restart without duplicating work
 
