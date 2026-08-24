@@ -10,7 +10,7 @@ API/SDK — no privileged node contract, no provider database/bucket, no
 Cloud-specific shape.
 
 - **Manifest:** [`manifest.json`](manifest.json)
-- **Mission schema:** [`mission.schema.json`](mission.schema.json)
+- **Mission schema:** [`mission.schema.json`](barista_app_factory/mission.schema.json)
 - **Example mission:** [`missions/example.json`](missions/example.json)
 - **Spec:** `openspec/changes/apps-001-portable-agent-apps/specs/factory-app/spec.md`
 

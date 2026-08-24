@@ -672,6 +672,27 @@ def test_the_gate_rule_is_opt_in_so_a_location_argument_is_not_mistaken_for_a_cr
         }])
 
 
+def test_the_mission_schema_travels_with_the_package():
+    """The schema must sit *inside* the package, or the wheel does not carry it.
+
+    It used to live one directory up. Every source checkout worked and every
+    installed copy raised FileNotFoundError on the first mission it validated,
+    so the app could be tested but never shipped — found by building the image
+    `manifest.json` had named since the app was written. Asserted on the
+    package's own directory rather than on the repo layout, because the repo
+    layout is exactly what hid the bug.
+    """
+    import barista_app_factory
+
+    pkg = Path(barista_app_factory.__file__).resolve().parent
+    assert (pkg / "mission.schema.json").is_file()
+    # And the manifest points at where it actually is, so a reader following the
+    # metadata finds the file.
+    manifest = json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())
+    declared = manifest["metadata"]["sh.barista.factory"]["mission_schema"]
+    assert (REPO / "apps" / "factory" / declared).is_file(), declared
+
+
 def test_the_staged_example_mission_loads_under_strict_gates():
     """The mission that demonstrates the chain is also the proof the pieces
     compose: every stage consumes what the one before it produced, and every

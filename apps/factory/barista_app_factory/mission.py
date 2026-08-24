@@ -10,7 +10,12 @@ from typing import Any, Optional
 
 from jsonschema import Draft202012Validator
 
-_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "mission.schema.json"
+# Inside the package, not beside it. When it lived one directory up it was not
+# part of the wheel, so every source checkout worked and every *installed* copy
+# raised FileNotFoundError on the first mission it validated — which meant the
+# app could be tested but never shipped. Found by building the image the
+# manifest had always named.
+_SCHEMA_PATH = Path(__file__).resolve().parent / "mission.schema.json"
 
 
 def _validator() -> Draft202012Validator:
