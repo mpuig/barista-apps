@@ -21,12 +21,20 @@
 
 ## 4. Provider work (barista-cloud, tracked here for sequencing)
 
-- [ ] 4.1 Implement the endpoint: authenticate the presented grant, refuse it unless live, mint a replacement copying `resource`/`actions`/`session_name`/`execution_epoch` from the row, and stop accepting the old secret.
-- [ ] 4.2 Rotation must be atomic with respect to authorization — there must be no instant where both secrets work, and none where neither does.
-- [ ] 4.3 Advertise the capability in discovery so an app can find out before depending on it.
-- [ ] 4.4 Confirm the existing "a grant cannot mint or revoke a grant" test still passes unchanged. If refresh required weakening it, the implementation has drifted into issuance.
+Shipped in barista-cloud as #132 (the endpoint), #133 (the session-binding
+refusal) and #134 (revoke-on-delete, which is what bounds the chain). Verified
+against that code rather than against the PR descriptions.
+
+- [x] 4.1 Implement the endpoint: authenticate the presented grant, refuse it unless live, mint a replacement copying `resource`/`actions`/`session_name`/`execution_epoch` from the row, and stop accepting the old secret. `hostapi/grants.py::refresh` — refusals ordered validity-first (revoked, expired, then `NOT_DELEGATED`) so the error names the first thing actually wrong, and the replacement's `resource`/`actions`/`session_name`/`execution_epoch` are copied from the row because there is no request body to read them from. That absence is the security argument, not an omission.
+- [x] 4.2 Rotation must be atomic with respect to authorization — there must be no instant where both secrets work, and none where neither does. Met by claiming the old row with a conditional `UPDATE … WHERE revoked_at IS NULL` *before* the replacement is built, and committing both in one transaction: outside the transaction the old secret works until the instant the new one does. The conditional claim is also what makes two concurrent refreshes resolve to exactly one winner — the loser is told the replacement is now the only live credential.
+- [x] 4.3 Advertise the capability in discovery so an app can find out before depending on it. `hostapi/capabilities.py:105` adds `grants.delegated` to the advertised profiles. #134 went further than this task asked and removed the vendor extension entirely, so the profile id is the whole gate — an app checks one thing, and "advertised but 501" is now a test failure on both sides.
+- [x] 4.4 Confirm the existing "a grant cannot mint or revoke a grant" test still passes unchanged. If refresh required weakening it, the implementation has drifted into issuance. `tests/test_hostapi_grants.py:842`, untouched across all three PRs (`git log` on that file shows no edit to the test) and passing. Refresh introduced no `grant.*` action.
 
 ## 5. Not in this change
 
-- [ ] 5.1 A maximum total lifetime for a refresh chain. The bound is the session (design D5); a number here would be arbitrary and portable contracts should not carry arbitrary numbers.
-- [ ] 5.2 Any operation that creates a grant from outside the provider's minting path. Still `grant.issue`, still unnecessary, still refused.
+Deliberately out of scope, recorded so the boundary is auditable. These are
+scope statements, not work — a checkbox here would be a task that can never
+honestly be ticked, since "we did not do this" is not an accomplishment.
+
+- A maximum total lifetime for a refresh chain. The bound is the session (design D5); a number here would be arbitrary and portable contracts should not carry arbitrary numbers. barista-cloud #134 is what makes the session an actual bound rather than an assumed one.
+- Any operation that creates a grant from outside the provider's minting path. Still `grant.issue`, still unnecessary, still refused.
