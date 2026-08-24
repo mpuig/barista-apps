@@ -20,32 +20,20 @@
   "permissions": {
     "actions": [
       "session.create",
-      { "action": "session.get", "scope": "own_session" },
-      { "action": "session.get", "scope": "created_sessions" },
-      { "action": "session.list", "scope": "created_sessions" },
-      { "action": "session.delete", "scope": "created_sessions" },
-      { "action": "session.exec", "scope": "created_sessions" },
-      { "action": "session.events", "scope": "created_sessions" },
-      { "action": "artifact.read", "scope": "own_session" },
-      { "action": "artifact.read", "scope": "created_sessions" },
-      { "action": "artifact.write", "scope": "own_session" }
+      "session.get",
+      "session.list",
+      "session.delete",
+      "session.exec",
+      "session.events",
+      "artifact.read",
+      "artifact.write"
     ],
     "network": { "egress": "allowlist", "allow": ["ntfy.sh:443"] },
     "secrets": [
-      { "name": "BARISTA_HOST_API_TOKEN", "ref": "grant://factory/coordinator" },
       { "name": "NOTIFY_TOKEN", "ref": "secret://factory/notify-token" }
     ],
     "artifacts": { "read": true, "write": true },
-    "child_sessions": {
-      "max_concurrent": 16,
-      "max_total": 256,
-      "allow_descendants": false,
-      "actions": [
-        { "action": "session.exec", "scope": "own_session" },
-        { "action": "session.events", "scope": "own_session" },
-        { "action": "artifact.write", "scope": "own_session" }
-      ]
-    }
+    "child_sessions": { "max_concurrent": 16, "max_total": 256 }
   },
   "metadata": {
     "sh.barista.factory": {

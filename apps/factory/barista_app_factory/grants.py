@@ -2,11 +2,17 @@
 
 A worker never inherits the coordinator's full authority. It receives a strictly
 narrower grant: no child-session creation, only the mission's declared secret
-*references* (never raw values), and the mission's egress bounds. Where the
-provider advertises ``grants.delegated`` the coordinator mints these as scoped
-grants; otherwise the same narrowing is applied to the worker's environment and
-declared actions, and provider-side enforcement follows when the grant profile
-lands.
+*references* (never raw values), and the mission's egress bounds.
+
+**The coordinator does not mint it.** The authority a worker holds comes from
+``permissions.child_sessions`` in ``manifest.json``, and the *provider* mints the
+worker's grant from that manifest at child-session create — it is the only party
+that can see both levels at once, and a grant that could mint another grant would
+be a key that makes keys. What this module computes is the same narrowing applied
+to the worker's *environment* (secret references, egress), so a mission is
+bounded even on a provider that does not yet advertise ``grants.delegated``.
+``WORKER_ACTIONS`` is the declared set, kept identical to the manifest's — a test
+fails if the two drift.
 """
 
 from __future__ import annotations

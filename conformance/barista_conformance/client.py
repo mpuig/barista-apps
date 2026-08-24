@@ -31,6 +31,10 @@ class HostAPIClient:
         transport: Optional[httpx.BaseTransport] = None,
         timeout: float = 30.0,
     ):
+        self._endpoint = endpoint
+        self._token = token
+        self._transport = transport
+        self._timeout = timeout
         headers = {"accept": "application/json"}
         if token:
             headers["authorization"] = f"Bearer {token}"
@@ -39,6 +43,18 @@ class HostAPIClient:
             headers=headers,
             transport=transport,
             timeout=timeout,
+        )
+
+    def as_principal(self, token: str) -> "HostAPIClient":
+        """A second client on the same endpoint, authenticated as someone else.
+
+        Delegation is only observable across principals: the same request has to
+        succeed for the coordinator and be refused for its worker. This is an
+        ordinary credential swap over the published contract — no private hook.
+        Caller owns the returned client's lifetime.
+        """
+        return HostAPIClient(
+            self._endpoint, token=token, transport=self._transport, timeout=self._timeout
         )
 
     def close(self) -> None:

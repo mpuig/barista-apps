@@ -33,6 +33,43 @@ Host API grants.
 - **Least privilege.** Declare only the Host API `actions` the app needs. A host
   may grant less than requested only if the app declares a valid `degraded_modes`
   entry.
+- **A scope is required to widen one.** An action is written either as a bare id
+  — which means the app's own session and nothing else — or as
+  `{ "action": …, "scope": "created_sessions" }`. There is no way to reach the
+  sessions an app creates without saying so at the point of declaration.
+
+## Creating child sessions
+
+An app that fans work out declares both halves: how many children, and what they
+get.
+
+```json
+"child_sessions": {
+  "max_concurrent": 16,
+  "max_total": 256,
+  "allow_descendants": false,
+  "actions": [
+    { "action": "session.exec",   "scope": "own_session" },
+    { "action": "artifact.write", "scope": "own_session" }
+  ]
+}
+```
+
+The **provider is the only minter**: it mints the child's grant from this list
+at child-session create. A coordinator asks for a child session and never
+handles that credential. `allow_descendants` defaults to *false*, so a child
+cannot fan out further unless the manifest says it may.
+
+> **The schema does not check that a child's actions are a subset of the app's
+> own.** JSON Schema cannot relate the two lists, so a manifest that
+> over-delegates validates cleanly and is refused by the *provider* at install.
+> Run the rules yourself before you ship one:
+>
+> ```bash
+> python3 contracts/app-manifest/v1alpha1/rules.py apps/<name>/manifest.json
+> ```
+>
+> See [the contract README](../contracts/app-manifest/README.md#the-subset-rule--and-what-the-schema-does-not-enforce).
 
 ## Capabilities
 
@@ -60,4 +97,5 @@ cd contracts/tests && uv run pytest -q     # includes manifest golden tests
 ```
 
 Every first-party app manifest (`apps/*/manifest.json`) is validated in CI and
-by `scripts/supply_chain_check.py` (digest pinning + reference-only secrets).
+by `scripts/supply_chain_check.py` — schema, digest pinning, reference-only
+secrets, **and** the semantic rules the schema cannot carry.

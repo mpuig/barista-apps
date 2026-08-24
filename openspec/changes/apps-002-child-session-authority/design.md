@@ -79,3 +79,70 @@ protect.
 The collision is purely nominal and cost real analysis time: two different things
 called "worker" in two repos. Recorded so the next reader does not spend the same
 afternoon.
+
+## D6. Per-action scope, not a second block (task 1.2)
+
+Two shapes could carry "these actions, on the sessions I create":
+
+- **A second block** — `permissions.actions` for my own session and, say,
+  `permissions.actions_on_created_sessions` beside it.
+- **A per-action scope** — one list whose entries name the action *and* what it
+  applies to.
+
+**The per-action scope is implemented.** Four reasons, in the order they decided
+it:
+
+1. **Scope is a property of the grant, not of the app.** A provider mints one
+   selector per (action, resource) pair. A list of `(action, scope)` pairs *is*
+   that set; two blocks are a set that has been split and must be rejoined by
+   every reader, correctly, every time.
+2. **`child_sessions.actions` reuses the same item type.** With a second block,
+   every level needs two: `child_sessions.actions` *and*
+   `child_sessions.actions_on_created_sessions`. Blocks multiply per level;
+   scopes do not. This alone settled it — the child level is the whole point of
+   the change, and the shape that makes it awkward is the wrong shape.
+3. **The subset check compares pairs.** `child ⊆ app` over pairs catches a
+   scope widening as naturally as a missing action. Split across blocks, the
+   obvious implementation compares names in one list and silently misses that
+   the child was handed a wider reach — the same class of bug as the flat list
+   we are replacing.
+4. **A third scope is an enum value, not a fourth block.** If "the sessions in
+   my mission" ever becomes a real scope, one enum grows. With blocks, the
+   permissions object grows a member and every consumer changes.
+
+Making the scope explicit *at the point of declaration* was the constraint, and
+it is met by construction: the object form **requires** `scope`. The bare action
+id survives as exactly `{"action": …, "scope": "own_session"}` — the reading
+every pre-change manifest already had — so backward compatibility costs nothing
+and there is still no way to obtain a wider scope by omission. `session.create`
+is the one action the schema refuses in the object form: it is collection-level,
+bounded by `child_sessions`, and a scope on it would mean nothing.
+
+## D7. What conformance can prove, and where it stops
+
+`factory-app`'s scenario becomes five cases under the `grants.delegated` profile.
+Two need only the ordinary credential — a child-authority manifest installs, and
+an over-delegating one is refused at install naming the offending action. The
+scenario itself needs more: the same request has to succeed for the coordinator
+and be refused for its worker, which means holding both credentials.
+
+**Host API `v1alpha1` has no endpoint that hands a delegated grant to a client.**
+The provider mints a child's grant and delivers it *into* the child session, as a
+`grant://` reference resolved into its environment. A black-box suite runs
+outside every session; it cannot obtain one through the published contract, and
+reaching around the contract would forfeit the property that makes conformance
+worth anything.
+
+So those three cases take operator-supplied credentials and otherwise **skip
+with that reason**. Since a skip never satisfies an advertised profile, a
+provider advertising `grants.delegated` without supplying them is reported *not
+conformant* — the suite declines to certify delegation it could not watch happen.
+The alternative, a case that passes because it never ran, is the failure mode
+this whole contract exists to avoid.
+
+Each case asserts both sides, so a provider that denies everything fails rather
+than passes, and a dead credential is detected rather than mistaken for a
+refusal. The remaining honest gap: whether a future change adds a way to obtain
+a delegated grant through the API, or operator-supplied probes stay the answer.
+That is a contract decision, not an implementation detail, and it is not made
+here.

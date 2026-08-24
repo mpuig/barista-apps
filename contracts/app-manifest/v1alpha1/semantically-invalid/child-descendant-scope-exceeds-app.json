@@ -1,0 +1,29 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "downward-overreach",
+  "version": "0.1.0",
+  "description": "SCHEMA-VALID AND SEMANTICALLY REFUSED. The action name session.exec is one it holds, so the plain subset test passes — but it holds it only over its OWN session, and it delegates it downwards over the grandchildren its children would create. An app may only delegate downwards a verb it exercises downwards itself.",
+  "workload": {
+    "image": "ghcr.io/mpuig/downward-overreach:0.1.0",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "architectures": ["aarch64"],
+    "entrypoint": ["/usr/local/bin/coordinator"],
+    "readiness": { "type": "none" }
+  },
+  "permissions": {
+    "actions": [
+      "session.create",
+      { "action": "session.exec", "scope": "own_session" },
+      { "action": "artifact.write", "scope": "own_session" }
+    ],
+    "child_sessions": {
+      "max_concurrent": 2,
+      "max_total": 8,
+      "allow_descendants": true,
+      "actions": [
+        "session.create",
+        { "action": "session.exec", "scope": "created_sessions" }
+      ]
+    }
+  }
+}

@@ -21,9 +21,17 @@ guarantees are `barista.sh`'s.
 ### Untrusted apps
 - **Threat:** an app tries to exceed its declared permissions (create unbounded
   children, read other sessions, escalate).
-- **Mitigation:** least-privilege manifest actions; the provider authorizes each
-  action; `child_sessions` bounds fan-out; Factory workers get a strictly
-  narrower grant (no `session.create`).
+- **Mitigation:** least-privilege manifest actions, each **scoped** to the app's
+  own session or to the sessions it creates — never wider; the provider
+  authorizes each action; `child_sessions` bounds fan-out *and* declares what a
+  child receives; Factory workers get a strictly narrower grant (no
+  `session.create`, `allow_descendants: false`).
+- **Residual risk:** a child's action set being a subset of the app's own is
+  **not enforced by the manifest schema** — JSON Schema cannot relate the two
+  lists. It is a provider obligation checked at install
+  (`contracts/app-manifest/v1alpha1/rules.py`). A provider that skips that check
+  will install an app that over-delegates to its workers, and the conformance
+  case `grants.over_delegating_manifest_refused` is what catches it.
 
 ### Delegated grants
 - **Threat:** a grant becomes an ambient, long-lived API key or is copied.

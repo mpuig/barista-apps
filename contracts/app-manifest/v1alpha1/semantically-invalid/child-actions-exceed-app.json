@@ -1,0 +1,29 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "overreaching-coordinator",
+  "version": "0.1.0",
+  "description": "SCHEMA-VALID AND SEMANTICALLY REFUSED. It hands its children session.delete, which it does not hold itself. JSON Schema cannot relate child_sessions.actions to permissions.actions, so a structural validator accepts this; a provider must refuse it at install and name session.delete.",
+  "workload": {
+    "image": "ghcr.io/mpuig/overreaching-coordinator:0.1.0",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "architectures": ["aarch64"],
+    "entrypoint": ["/usr/local/bin/coordinator"],
+    "readiness": { "type": "none" }
+  },
+  "permissions": {
+    "actions": [
+      "session.create",
+      { "action": "session.exec", "scope": "created_sessions" },
+      { "action": "artifact.write", "scope": "own_session" }
+    ],
+    "child_sessions": {
+      "max_concurrent": 2,
+      "max_total": 8,
+      "allow_descendants": false,
+      "actions": [
+        { "action": "session.exec", "scope": "own_session" },
+        { "action": "session.delete", "scope": "own_session" }
+      ]
+    }
+  }
+}

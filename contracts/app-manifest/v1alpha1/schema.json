@@ -236,15 +236,41 @@
         "story.publish"
       ]
     },
+    "action_scope": {
+      "description": "WHICH sessions a declared action may target, relative to the session that holds the authority. 'own_session': only the session the grant was minted for. 'created_sessions': only the sessions that session itself created — never a sibling, a parent, or any other session in the account. A provider SHALL NOT widen a declared scope.",
+      "type": "string",
+      "enum": ["own_session", "created_sessions"]
+    },
+    "action_grant": {
+      "description": "One declared action together with the sessions it applies to. Two equivalent forms: a bare action id, which means exactly {\"action\": <id>, \"scope\": \"own_session\"} and is kept for manifests written before scopes existed; or the object form, which states the scope at the point of declaration. The same action MAY appear once per scope. 'session.create' is collection-level — it authorizes creating a child session and is bounded by permissions.child_sessions, not by a scope — so it is declared as a bare action id and the object form rejects it.",
+      "oneOf": [
+        { "$ref": "#/$defs/action_id" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "scope"],
+          "properties": {
+            "action": { "$ref": "#/$defs/action_id" },
+            "scope": { "$ref": "#/$defs/action_scope" }
+          },
+          "not": {
+            "description": "session.create takes no scope; declare it as the bare action id.",
+            "required": ["action"],
+            "properties": { "action": { "const": "session.create" } }
+          }
+        }
+      ]
+    },
     "permissions": {
       "description": "Least-privilege declaration of what the app is allowed to do. Contains only secret references, never plaintext.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "actions": {
+          "description": "Actions the app itself may perform, each with the sessions it applies to. See $defs/action_grant: a bare action id means the app's own session only; the object form states the scope explicitly.",
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/action_id" }
+          "items": { "$ref": "#/$defs/action_grant" }
         },
         "network": {
           "$ref": "#/$defs/network_policy"
@@ -324,12 +350,38 @@
       }
     },
     "child_session_limits": {
+      "description": "Bounds AND authority for the sessions this app creates. The counts bound HOW MANY children; 'actions' declares WHAT a child receives; 'allow_descendants' declares whether a child may create sessions of its own. A block carrying only the counts — every manifest written before those two fields existed — means a child receives no delegated authority at all, which is unchanged behaviour.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "max_concurrent": { "type": "integer", "minimum": 0 },
-        "max_total": { "type": "integer", "minimum": 0 }
-      }
+        "max_total": { "type": "integer", "minimum": 0 },
+        "actions": {
+          "description": "The actions a child session receives. The provider is the only minter: it mints this set as the child's grant at child-session create; the parent never handles that credential. Scopes here are relative to the CHILD ('own_session' = the child itself, 'created_sessions' = the grandchildren the child creates). This set MUST be a subset of the app's own — a rule JSON Schema CANNOT express and therefore does NOT enforce. See contracts/app-manifest/README.md ('The subset rule') and the reference implementation in rules.py.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/action_grant" }
+        },
+        "allow_descendants": {
+          "description": "Whether a child session may itself create further sessions. Absent or false: it may not, even though the app itself may — the ratified factory-app scenario. When it is not true, 'actions' MUST NOT contain session.create; the schema enforces that much.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["actions"],
+            "properties": {
+              "actions": { "contains": { "const": "session.create" } }
+            }
+          },
+          "then": {
+            "required": ["allow_descendants"],
+            "properties": { "allow_descendants": { "const": true } }
+          }
+        }
+      ]
     },
     "state_transfer": {
       "description": "Hooks for exact (capsule) and semantic (adapter) session transfer.",
