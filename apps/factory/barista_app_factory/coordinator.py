@@ -20,6 +20,7 @@ from barista_app_sdk.errors import AuthenticationError, HostAPIError
 
 from .credential import CredentialKeeper, LostAuthority
 from .grants import derive_worker_grant
+from . import transfer
 from .mission import Mission, Task
 from .state import MissionState, TaskState
 
@@ -108,6 +109,11 @@ class Coordinator:
             env=self.grant.env(), metadata={"mission": self.mission.name, "task": task.id},
         )
 
+        # Everything the task is given, before it runs: content the mission
+        # planted, and content a dependency produced. Both land before the
+        # command so the task sees a world that is already set up.
+        self._place_inputs(task, worker.id)
+
         handle = self.client.exec(
             worker.id, task.worker_command(), env={**self.grant.env(), **task.env},
             working_dir=task.workdir, timeout_seconds=self.mission.task_timeout_s,
@@ -118,11 +124,23 @@ class Coordinator:
 
         checks: list[dict] = []
         if ok and task.check:
+            # Re-assert the planted criterion before it judges. This is the half
+            # of the gate guarantee that needs no opt-in (design D3): a worker
+            # that overwrote the planted content — deliberately or by generating
+            # a file of the same name — is judged against the mission's version,
+            # not its own. Idempotent, so it costs nothing when untouched.
+            self._plant(task, worker.id)
             chk = self.client.exec(worker.id, task.check)
             chk_op = self.client.wait_operation(chk.operation_id, timeout=self.mission.task_timeout_s)
             chk_exit = (chk_op.result or {}).get("exit_code", 1)
             checks.append({"command": task.check, "exit_code": chk_exit})
             ok = chk_op.done and chk_exit == 0
+
+        if ok and task.produces:
+            # Before the harvest, and therefore before the reap: a produced
+            # output that is not captured while its worker lives is one no
+            # dependent can ever receive.
+            self._capture_outputs(task, worker.id)
 
         ts.exit_code = exit_code
         if ok:
@@ -134,6 +152,67 @@ class Coordinator:
             # Failed workers are NOT reaped: they stay for bounded forensics.
             ts.state = "failed"
             self.state.save()
+
+    # -- inputs, outputs, and the staging scope ---------------------------- #
+    def _staged(self, task_id: str, name: str) -> str:
+        """Where a produced output rests between its producer and its consumers.
+
+        Inside the coordinator's own session, which is the one scope that
+        outlives every worker — the same durability argument that puts receipts
+        there. Namespaced by mission and task so two tasks producing `spec` do
+        not collide.
+        """
+        return f"/factory/{self.mission.name}/{task_id}/{name}"
+
+    def _plant(self, task: Task, worker_id: str) -> None:
+        """Place the mission's own content into the worker's session."""
+        for path, content in task.files.items():
+            transfer.write_file(self.client, worker_id, path, content)
+
+    def _place_inputs(self, task: Task, worker_id: str) -> None:
+        self._plant(task, worker_id)
+        if not task.consumes:
+            return
+        coord = self._ensure_coordinator_session()
+        producers = {
+            name: dep
+            for dep in task.depends_on
+            for name in self.mission.by_id()[dep].produces
+        }
+        for name, dest in task.consumes.items():
+            # The mission is validated at load, so a consumed output always has a
+            # producer among this task's dependencies, and that producer is `ok`
+            # or this task would not be ready.
+            src = self._staged(producers[name], name)
+            transfer.write_file(self.client, worker_id, dest, transfer.read_file(self.client, coord, src))
+
+    def _capture_outputs(self, task: Task, worker_id: str) -> None:
+        """Move each declared output into the coordinator scope, and record its digest.
+
+        Worker → coordinator → worker, never worker → worker (design D2): a
+        direct copy would need both workers alive at once, which is exactly what
+        reap-on-success gives up.
+        """
+        ts = self.state.tasks[task.id]
+        coord = self._ensure_coordinator_session()
+        for name, path in task.produces.items():
+            raw = transfer.read_file(self.client, worker_id, path)
+            digest = transfer.write_file(self.client, coord, self._staged(task.id, name), raw)
+            with self.state.lock:
+                ts.outputs[name] = digest
+                self.state.save()
+            # A listable, durable reference to what this task emitted. The
+            # registry records references rather than bytes, which is why the
+            # bytes rest in the coordinator session and only the digest is
+            # registered here.
+            self.client.register_artifact(
+                coord,
+                name=f"{task.id}-{name}",
+                digest=digest,
+                size_bytes=len(raw),
+                media_type="application/octet-stream",
+                idempotency_key=f"{self.mission.name}:{task.id}:out:{name}",
+            )
 
     def _harvest_then_reap(self, task: Task, worker_id: str, exit_code: int, checks: list) -> None:
         """Register the receipt (and any harvested artifact) on the durable
@@ -204,21 +283,8 @@ class Coordinator:
             self._record_lost_authority(self._authentication_reason(exc))
             return
 
-        pending = [t for t in self.mission.tasks if self.state.tasks[t.id].state != "ok"]
         deadline = time.time() + self.mission.deadline_s if self.mission.deadline_s else None
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.mission.concurrency) as pool:
-            futures = {}
-            for task in pending:
-                if deadline and time.time() > deadline:
-                    break
-                if self.state.authority_lost:
-                    # Submitting more work would only produce more refusals, and
-                    # every one of them would look like a task that failed.
-                    break
-                futures[pool.submit(self._guarded, task)] = task
-            for fut in concurrent.futures.as_completed(futures):
-                fut.result()
+        self._schedule(deadline)
 
         self.state.credential = self.credential.status()
         if self.state.authority_lost:
@@ -226,10 +292,103 @@ class Coordinator:
             # and unfinished is not the same as attempted and refused.
             self.state.save()
             return
-        if all(t.state in ("ok", "failed") for t in self.state.tasks.values()):
+        if all(t.state in ("ok", "failed", "blocked") for t in self.state.tasks.values()):
+            # 'done' means the mission ran to a conclusion, not that everything
+            # passed — as it did before blocked existed, when a failed task still
+            # left the mission done. `summary()` carries the counts.
             self.state.state = "done"
             self.state.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.state.save()
+
+    # -- scheduling -------------------------------------------------------- #
+    def _ready(self) -> list[Task]:
+        """Tasks that may start now: pending, with every dependency succeeded.
+
+        Derived on every pass and never persisted (design D5). A stored ready set
+        is a second record of a fact the task states already hold, and after a
+        crash the two can disagree — the failure this codebase has paid for
+        before. Recomputing is cheap and cannot drift.
+        """
+        states = self.state.tasks
+        return [
+            t for t in self.mission.tasks
+            # `running` counts as ready on purpose. Nothing is running in *this*
+            # process when scheduling begins, so a task persisted that way is a
+            # previous run that died mid-flight, and it must be picked up again —
+            # `run_task` re-ensures it under its existing attempt rather than
+            # starting a second one. Excluding it here would strand it forever.
+            if states[t.id].state in ("pending", "running")
+            and all(states[d].state == "ok" for d in t.depends_on)
+        ]
+
+    def _mark_unreachable(self) -> bool:
+        """Block every task that can no longer run, and say whether any were.
+
+        A task is unreachable when a dependency has failed or is itself blocked.
+        Applied transitively: blocking only direct dependents would leave a
+        task three hops downstream `pending` forever, and a mission that never
+        finishes is a worse report than one that says why it stopped.
+        """
+        states = self.state.tasks
+        changed = False
+        for task in self.mission.tasks:
+            if states[task.id].state != "pending":
+                continue
+            for dep in task.depends_on:
+                if states[dep].state in ("failed", "blocked"):
+                    states[task.id].state = "blocked"
+                    states[task.id].blocked_by = dep
+                    changed = True
+                    break
+        return changed
+
+    def _schedule(self, deadline: float | None) -> None:
+        """Run the graph, keeping `concurrency` slots busy.
+
+        A ready set rather than levels: running the graph level by level would
+        put a barrier between them, so one slow task would idle every worker
+        until it finished. Here a slot is refilled the moment any task completes,
+        so wall-clock follows the critical path instead of the sum of each
+        level's slowest task.
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.mission.concurrency) as pool:
+            running: dict[concurrent.futures.Future, Task] = {}
+            while True:
+                self._mark_unreachable()
+                if deadline and time.time() > deadline:
+                    break
+                if self.state.authority_lost:
+                    # Submitting more would only produce more refusals, and every
+                    # one of them would look like a task that failed.
+                    break
+                while len(running) < self.mission.concurrency:
+                    ready = [t for t in self._ready() if t.id not in {x.id for x in running.values()}]
+                    if not ready:
+                        break
+                    task = ready[0]
+                    # The claim is this dict, not a state write. Only this thread
+                    # submits, so membership here is enough to stop a second
+                    # submission — and writing `running` to the state would
+                    # collide with `run_task`'s recovery rule, which reads that
+                    # same value to decide whether it is resuming an accepted
+                    # attempt or starting a new one.
+                    running[pool.submit(self._guarded, task)] = task
+                if not running:
+                    break
+                # Wait for the first completion rather than all of them: that is
+                # what refills a slot as soon as one frees, and what lets a
+                # dependent start the instant its dependency lands.
+                done, _ = concurrent.futures.wait(
+                    running, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for fut in done:
+                    running.pop(fut)
+                    fut.result()
+            for fut in concurrent.futures.as_completed(list(running)):
+                fut.result()
+        # A dependency may have failed on the final pass, leaving dependents
+        # pending with nothing left to run them.
+        self._mark_unreachable()
 
     @staticmethod
     def _authentication_reason(exc: AuthenticationError) -> str:

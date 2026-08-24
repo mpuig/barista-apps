@@ -38,6 +38,58 @@ name.
   before the reap.
 - **Failed workers survive** — they are left in place for bounded forensics
   instead of being deleted.
+- **Tasks may depend on tasks** — `depends_on` names the tasks that must succeed
+  first. Scheduling is a ready set, not levels: a slot is refilled the moment any
+  task completes, so wall-clock follows the critical path rather than the sum of
+  each level's slowest task, and a mission with no edges runs exactly as it did
+  before edges existed. A task whose dependency failed is reported **blocked**,
+  naming the dependency — not failed, because it never ran, and not pending,
+  because it never will.
+- **A stage hands its output to the next** — a task declares `produces`, a
+  dependent declares `consumes`, and the content arrives in the dependent's own
+  session before its command runs. The route is worker → coordinator → worker,
+  never worker to worker: a direct copy would need both workers alive at once,
+  which is exactly what reap-on-success gives up.
+
+## Gates the worker cannot forge
+
+`check` is Factory's independent verification. It catches an agent that reports
+DONE over a failing test — a real failure mode. But a check is only independent
+if the *criterion* did not come from the thing being judged, and a microVM does
+not give you that: the isolation answers **containment**, not **self-marking**,
+because the agent and the test are inside the same VM.
+
+Two mechanisms, and it is worth knowing which is which:
+
+- **Planting, re-asserted before the check.** `files` places the mission's own
+  content into the worker's session before the command runs, and places it again
+  between the command and the check. A worker that overwrote the criterion is
+  judged against the mission's copy. This is always on, costs nothing when the
+  content is untouched, and needs no cooperation from the mission author beyond
+  planting the file.
+- **`strict_gates`** (opt-in, mission-level) additionally refuses **at load** any
+  check naming a path that is neither planted nor consumed. Opt-in on purpose: an
+  argv path is not always the criterion. `git -C /work diff --quiet` names
+  `/work` as the *place to look* while the criterion is git's own notion of a
+  clean tree — sound, and indistinguishable by shape from a forged gate. An
+  always-on version of this rule refused this repo's own `missions/example.json`.
+
+**What this does not claim.** A worker can still defeat a planted check by
+tampering with what the check *reads* rather than the criterion itself —
+replacing the module under test with a stub that satisfies it. And under
+`strict_gates`, a path buried in a shell string (`sh -c "node t.js"`) has no argv
+element beginning with a slash, so it escapes the rule. The honest claim is
+narrower and still worth having: **the criterion is fixed by someone other than
+the party being judged**, which is the difference between evidence and
+self-assessment.
+
+`missions/staged.json` is the worked example: an intent is planted, a spec stage
+produces one, an implementation stage consumes it and is judged by a planted
+acceptance suite it was told not to edit, and a documentation stage consumes
+both. Note that the four-file review ceremonies people build on top of this
+(`intent.md → spec.md → plan.md → diff`) are **mission data**, not schema — the
+schema knows only about edges, outputs and planted files, which is what keeps
+Factory portable.
 - **Bounded delegation** — a mission declares allowed adapters, secret
   *references*, egress, concurrency, attempts, deadline, and budgets. Workers
   receive a strictly narrower grant (no child-session creation) and see secret
