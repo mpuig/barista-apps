@@ -16,6 +16,9 @@ barista-app-sdk = { path = "../../sdks/python", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["barista_app_factory"]
+# The mission schema is loaded at runtime, so it has to be in the wheel and not
+# only in the checkout.
+artifacts = ["barista_app_factory/mission.schema.json"]
 
 [build-system]
 requires = ["hatchling"]
