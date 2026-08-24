@@ -92,6 +92,46 @@ class Artifact:
         )
 
 
+@dataclass(frozen=True)
+class Grant:
+    """A delegated credential, as returned by a refresh.
+
+    ``resource`` and ``actions`` are the presented grant's own, copied from the
+    provider's record — a refresh keeps authority, it never confers it. There is
+    no field for what was asked for, because nothing can be asked for.
+    """
+
+    secret: str
+    resource: str
+    actions: tuple[str, ...]
+    expires_at: str
+
+    @classmethod
+    def parse(cls, d: dict) -> "Grant":
+        return cls(
+            secret=d["secret"],
+            resource=d["resource"],
+            actions=tuple(d.get("actions", ())),
+            expires_at=d["expires_at"],
+        )
+
+    def expires_at_epoch(self) -> Optional[float]:
+        """``expires_at`` as a POSIX timestamp, or None if it does not parse.
+
+        Callers compare it against their own clock, so a value that will not
+        parse must be visible as 'unknown' rather than as 'expired now'.
+        """
+        from datetime import datetime, timezone
+
+        try:
+            parsed = datetime.fromisoformat(str(self.expires_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+
 @dataclass
 class Event:
     cursor: str

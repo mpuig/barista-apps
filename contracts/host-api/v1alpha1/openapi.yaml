@@ -26,6 +26,7 @@ tags:
   - name: exec
   - name: events
   - name: artifacts
+  - name: grants
   - name: operations
 
 paths:
@@ -149,6 +150,14 @@ paths:
       tags: [sessions]
       operationId: deleteSession
       summary: Delete a session.
+      description: >
+        Deleting a session SHALL revoke the delegated grants bound to it
+        (capability `grants.delegated`). This is not housekeeping: the session is
+        what bounds a refresh chain, so a provider that leaves a grant live after
+        its session is gone has a credential that renews itself forever with
+        nothing left to end it — and no maximum-lifetime ceiling can catch that,
+        because no single credential ever exceeds it. Revocation must cover every
+        path that deletes a session, not the one the client happened to call.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
@@ -297,6 +306,110 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Artifact" }
+
+  /v1alpha1/grants/refresh:
+    post:
+      tags: [grants]
+      operationId: refreshGrant
+      summary: Replace the delegated grant that authenticates this request (capability grants.delegated).
+      description: >
+        Available whenever the provider advertises `grants.delegated`, and
+        gated on nothing else. There is deliberately no separate capability id
+        and no vendor extension to discover: a delegated grant that cannot be
+        refreshed dies fifteen minutes into an hour-long mission, so refresh is
+        part of what advertising delegated grants now means. An app checks for
+        `grants.delegated` and depends on it. A provider that does not advertise
+        it returns a `capability` error (501) and never a weaker fake.
+
+
+        **The credential IS the subject.** Authenticate with the delegated grant
+        being refreshed (`Authorization: Bearer <grant secret>`). There is no
+        path parameter and no grant id in the body: a caller can only refresh
+        what it already holds. A tenant credential has no grant to refresh and is
+        refused.
+
+
+        **There is no request body, and no scope input of any kind.** The
+        replacement's `resource` and `actions` are copied from the stored grant.
+        That is the whole difference between refresh and issuance: with no scope
+        on the wire there is no input a caller could use to widen. A provider
+        that reads a resource or an action list from a request body has
+        implemented `grant.issue`, which this contract deliberately does not
+        have. Anything sent as a body is ignored.
+
+
+        **Rotation, not extension.** Once the replacement is issued the presented
+        secret stops being accepted, so a leaked secret is worth only until the
+        next refresh rather than for the session's lifetime. The replacement is
+        returned once and is not recoverable: a caller that loses the response
+        has locked itself out and must be re-provisioned. That failure is
+        intended — it is loud and immediate, and the alternative is a credential
+        that outlives its holder's knowledge of it.
+
+
+        Deliberately **not** idempotent, and deliberately without an
+        `Idempotency-Key`: replaying a refresh would require the provider to keep
+        the replacement secret retrievable, which is a second copy of a live
+        credential. A client must therefore not retry a refresh whose response
+        was lost; it must refresh early enough that a lost response leaves time
+        to be re-provisioned before the grant lapses.
+
+
+        **A grant that is no longer live cannot be refreshed.** Expired, revoked,
+        and already-rotated secrets are all refused, which is what keeps expiry
+        and revocation final. Letting a grant lapse is a lockout, not a soft
+        failure.
+
+
+        **A grant with no session binding cannot be refreshed either.** What
+        bounds a refresh chain is the session the grant is bound to: deleting the
+        session revokes the grant, and that is what ends the chain — see
+        `deleteSession`, where it is an obligation rather than a courtesy. A grant with no session has no
+        such bound, so refreshing it would let a holder outlive a maximum-lifetime
+        ceiling indefinitely in small steps while no single credential ever
+        exceeded it — and nothing would look wrong from any one observation. That
+        ceiling exists to force a re-issue, which is a re-decision; a chain that
+        never trips it removes the review. Such a grant is refused with
+        `class: authorization`.
+
+
+        **A refusal SHALL leave the presented credential working.** Rotation is
+        one transaction and its failure direction is rollback, never
+        revoke-then-fail: a caller stranded by a *refused* refresh would hold no
+        credential and have no way to obtain one. Combined with the atomicity
+        rule — no instant where both secrets work, and none where neither does —
+        this means every refresh outcome leaves the caller holding exactly one
+        working credential.
+      responses:
+        "200":
+          description: >
+            A replacement credential carrying the presented grant's own resource
+            and actions. The presented secret is no longer accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RefreshedGrant" }
+        "401":
+          description: >
+            The presented secret is not a live delegated grant — unknown,
+            expired, revoked, or already replaced by an earlier refresh.
+            `class` is `authentication`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: >
+            The credential authenticates but is not a refreshable delegated
+            grant: a tenant credential (nothing to refresh) or a grant with no
+            session binding (nothing to bound the chain). `class` is
+            `authorization`. The presented credential keeps working.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "501":
+          description: This provider does not advertise `grants.delegated`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1alpha1/operations/{operationId}:
     parameters:
@@ -538,6 +651,38 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Artifact" }
+
+    RefreshedGrant:
+      description: >
+        A replacement delegated credential. `resource` and `actions` are copied
+        from the stored grant, never from the request — refresh keeps authority,
+        it does not confer it. There is intentionally no field describing what
+        was asked for, because nothing can be asked for.
+      type: object
+      additionalProperties: false
+      required: [secret, resource, actions, expires_at]
+      properties:
+        secret:
+          description: >
+            The replacement credential. Present it as the bearer token from now
+            on; the previous secret is no longer accepted. Returned once and not
+            recoverable — losing it is a lockout.
+          type: string
+        resource:
+          description: The resource the grant acts on, unchanged from the presented grant.
+          type: string
+        actions:
+          description: >
+            The actions the grant authorizes, unchanged from the presented
+            grant. Neither wider nor narrower.
+          type: array
+          items: { type: string }
+        expires_at:
+          description: >
+            When the replacement stops being accepted. A caller must refresh
+            before this instant: a lapsed grant cannot be refreshed.
+          type: string
+          format: date-time
 
     Error:
       description: >

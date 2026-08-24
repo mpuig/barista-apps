@@ -40,6 +40,30 @@ guarantees are `barista.sh`'s.
   the boundary. (Provider-side grant enforcement is the `grants.delegated`
   profile; see the kernel's execution-epoch work for rebinding on restore/fork.)
 
+### Keeping a grant alive without making it permanent
+- **Threat:** a credential that must outlive its own expiry becomes either a
+  permanent one (extend the expiry and a leaked secret is good forever) or a
+  minting privilege (let the holder ask for a new grant and it is a key that
+  makes keys).
+- **Mitigation:** `POST /v1alpha1/grants/refresh` **rotates** — the previous
+  secret stops working, so a leaked one is worth only until the next refresh —
+  and takes **no request body**, so the replacement's resource and actions are
+  copied from the provider's record and there is no input a holder could widen
+  with. Expired, revoked, already-rotated and **session-unbound** grants are all
+  refused: the session is what bounds a refresh chain, so deleting a session
+  revokes the grants bound to it, and a grant with no session has nothing to end
+  its chain. Conformance cases
+  `grants.refresh_preserves_exactly_the_presented_scope`,
+  `grants.refresh_rotates_the_previous_secret`,
+  `grants.refresh_cannot_widen_authority`,
+  `grants.refresh_refused_after_revocation` and
+  `grants.refresh_refused_after_expiry` are what catch a provider that gets any
+  of this wrong — including one that reads scope from the request, which is
+  issuance under refresh's name.
+- **Residual:** a caller that refreshes and loses the response is locked out, by
+  design. Factory reports that as *lost authority* rather than as failed work, so
+  it is read as a credential to re-provision rather than a task to debug.
+
 ### Exact-memory secrets
 - **Threat:** a capsule (exact memory) contains secrets the workload copied into
   RAM; forking/exporting duplicates them.

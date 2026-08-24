@@ -43,6 +43,15 @@ BaristaClient(Config(endpoint="https://api.barista.sh", token_env="BARISTA_TOKEN
   capability errors are never retried as transient.
 - **Operations & streams.** `wait_operation(...)` with bounded timeout;
   `events(session_id, cursor=...)` resumes from a cursor.
+- **Delegated grant refresh.** `refresh_grant()` (requires `grants.delegated`)
+  replaces the delegated grant the client authenticates with and starts
+  presenting the replacement, returning the `Grant` — same resource, same
+  actions, later expiry. The credential is the subject, so there is nothing to
+  pass and nothing that could widen the result. It is **never retried**: the
+  operation takes no idempotency key, so a blind retry would rotate again from a
+  secret that no longer works. Rotation has no overlap window, so a request that
+  raced one is retried with the new credential rather than raising a spurious
+  authentication error.
 - **Attach helpers.** `attach.AttachFrame` codec plus `open_attach()` (requires
   the `ws` extra) for byte-clean or PTY attach.
 - **Adapters.** `adapters.Adapter` protocol (detect, export semantic state,

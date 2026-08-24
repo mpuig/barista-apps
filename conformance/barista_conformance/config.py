@@ -16,15 +16,20 @@ from typing import Optional
 class DelegatedProbe:
     """Credentials and handles for the child-session authority cases.
 
-    Host API ``v1alpha1`` has **no endpoint that hands a delegated grant to a
-    client**. A child's credential is minted by the provider and delivered into
-    the child session (a ``grant://`` secret reference resolved into its
-    environment), so a black-box suite running *outside* any session cannot
-    obtain one through the published contract. Nothing here is a private
-    provider hook: the operator installs an app that declares child authority,
-    lets the provider create a coordinator and a worker from it, and hands the
-    suite the two credentials the provider minted. Absent this, the cases skip
-    with that reason rather than pass vacuously.
+    A child's credential is minted by the provider and delivered into the child
+    session (a ``grant://`` secret reference resolved into its environment).
+    Supplying it here is still supported and still takes precedence — an
+    operator installs an app that declares child authority, lets the provider
+    create a coordinator and a worker from it, and hands the suite the two
+    credentials the provider minted.
+
+    Since apps-003 it is no longer the *only* way. A provider that advertises
+    ``grants.delegated`` offers grant refresh, which is the contract's only
+    positive proof that a client holds a live delegated grant — so the suite can
+    stand up its own probe sessions, read the credential the provider resolved
+    into them, confirm it by refreshing it, and run the cases unattended. See
+    ``AcquiredDelegation``. Absent both, the cases skip with that reason rather
+    than pass vacuously.
 
     The app named here MUST declare, in its manifest:
       * ``permissions.actions`` containing ``scoped_action`` over
@@ -78,6 +83,30 @@ class DelegatedProbe:
 
 
 @dataclass
+class AcquiredDelegation:
+    """What the suite obtained for *itself*, and how. Filled in at run time.
+
+    apps-002 could only take delegated credentials from an operator, because no
+    client could obtain one and nothing could confirm one. Grant refresh changes
+    both halves: the credential a provider resolves into a probe session is
+    readable through the published contract (exec + events, under the env var
+    name the manifest declares), and refresh accepts a live delegated grant while
+    refusing anything that is not one. So the suite creates a sacrificial
+    coordinator, lets the provider mint a child beneath it, confirms both
+    credentials by refreshing them, and runs the delegation cases unattended.
+
+    The probe sessions are sacrificial by design: refreshing their grants rotates
+    the secret their own workload was given, so they are named ``conf-probe-*``
+    and deleted when the run ends. ``sessions`` is that cleanup list.
+    """
+
+    probe: Optional["DelegatedProbe"]
+    reason: str
+    """Why the suite does or does not hold credentials — reported either way."""
+    sessions: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ProviderConfig:
     """How to reach and authenticate to a Host API provider."""
 
@@ -115,6 +144,33 @@ class ProviderConfig:
     delegated_probe: Optional[DelegatedProbe] = None
     """Operator-supplied delegated credentials; see DelegatedProbe."""
 
+    grant_env_var: Optional[str] = None
+    """Env var a delegated grant is resolved into inside a session. Left None,
+    the suite reads the name from the manifest it installs — which is where a
+    portable app gets it from too. Set it only for a provider that delivers the
+    credential under a different name than the manifest declares."""
+
+    unbound_grant: Optional[str] = None
+    """A delegated grant bound to no session, if the provider can mint one.
+
+    Refresh must refuse it: the session is what ends a refresh chain, so an
+    unbound grant would renew past any maximum-lifetime ceiling in steps that
+    never individually exceed it — and a ceiling exists to force a re-issue,
+    which is a re-decision. A black-box client cannot produce such a grant (every
+    credential it can obtain arrives inside a session), so this is supplied the
+    way operator credentials are, and the assertion is made only when it is.
+    """
+
+    expiry_wait_seconds: float = 30.0
+    """How long the suite is willing to wait for a grant to expire in order to
+    prove that an expired grant cannot be refreshed. Expiry is the one half of
+    that requirement no request can produce — it happens by the clock — so a
+    provider whose grants outlive this budget leaves the case unproven and the
+    profile uncertified. Run against a short-lifetime tenant, or raise this."""
+
+    acquired: Optional[AcquiredDelegation] = None
+    """Filled in by the suite at run time; see AcquiredDelegation."""
+
     def resolved_token(self) -> Optional[str]:
         if self.token:
             return self.token
@@ -138,4 +194,9 @@ class ProviderConfig:
             provider_version=os.environ.get("BARISTA_PROVIDER_VERSION", "unknown"),
             standalone=os.environ.get("BARISTA_CONFORMANCE_STANDALONE", "") == "1",
             delegated_probe=DelegatedProbe.from_env(),
+            grant_env_var=os.environ.get("BARISTA_CONFORMANCE_GRANT_ENV") or None,
+            unbound_grant=os.environ.get("BARISTA_CONFORMANCE_UNBOUND_GRANT") or None,
+            expiry_wait_seconds=float(
+                os.environ.get("BARISTA_CONFORMANCE_EXPIRY_WAIT_SECONDS", "30")
+            ),
         )

@@ -357,6 +357,131 @@ def test_error_classes_are_the_agreed_set():
     }
 
 
+# --------------------------------------------------------------------------- #
+# Grant refresh (apps-003). The wire shape is the whole security argument: the
+# replacement's scope comes from the stored row, so there must be NO scope input
+# on the request. These pin that, because "refresh" and "issue" differ by
+# exactly one request field and a reviewer will not catch it twice.
+# --------------------------------------------------------------------------- #
+REFRESH_PATH = "/v1alpha1/grants/refresh"
+
+
+def _refresh_operation() -> dict:
+    spec = yaml.safe_load(OPENAPI.read_text())
+    assert REFRESH_PATH in spec["paths"], f"{REFRESH_PATH} is missing from the contract"
+    path_item = spec["paths"][REFRESH_PATH]
+    assert set(path_item) == {"post"}, f"refresh is a POST and nothing else: {sorted(path_item)}"
+    return path_item["post"]
+
+
+def test_refresh_takes_no_request_body_at_all():
+    """Design D1: the request carries no scope. Not an optional scope, not an
+    ignored one — none, so there is nothing a caller could widen with. A
+    requestBody here would mean this contract had specified `grant.issue`."""
+    op = _refresh_operation()
+    assert "requestBody" not in op, (
+        "refresh must declare no request body: any body schema is an input, and an "
+        "input is how issuance gets in"
+    )
+    # Nor a query/path parameter naming a grant, a resource, or an action.
+    names = {p.get("name", "").lower() for p in op.get("parameters", [])}
+    assert not (names & {"resource", "action", "actions", "scope", "grant", "grantid"}), names
+
+
+def test_refresh_response_carries_the_scope_it_did_not_take():
+    op = _refresh_operation()
+    ok = op["responses"]["200"]["content"]["application/json"]["schema"]
+    assert ok["$ref"] == "#/components/schemas/RefreshedGrant"
+    schema = yaml.safe_load(OPENAPI.read_text())["components"]["schemas"]["RefreshedGrant"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"secret", "resource", "actions", "expires_at"}
+    assert set(schema["properties"]) == {"secret", "resource", "actions", "expires_at"}
+    assert schema["properties"]["actions"]["type"] == "array"
+    assert schema["properties"]["expires_at"]["format"] == "date-time"
+
+
+def test_refresh_is_not_idempotent_by_key():
+    """Rotation is not replayable: honouring an Idempotency-Key would require the
+    provider to keep the replacement secret retrievable (design D2). The absence
+    of the header is the contract, so it is asserted rather than assumed."""
+    op = _refresh_operation()
+    params = {p.get("$ref", "") for p in op.get("parameters", [])}
+    assert "#/components/parameters/IdempotencyKey" not in params
+
+
+def test_refresh_documents_its_refusals_and_its_capability_gate():
+    op = _refresh_operation()
+    assert set(op["responses"]) == {"200", "401", "403", "501"}, sorted(op["responses"])
+    assert op["tags"] == ["grants"]
+    text = json.dumps(op).lower()
+    # Task 1.2: gated on the capability, and reachable only with a grant.
+    assert "grants.delegated" in text
+    assert "tenant credential" in text
+    # Task 1.3: rotation and the lockout are discoverable from the contract.
+    assert "stops being accepted" in text or "no longer accepted" in text
+    assert "locked itself out" in text
+
+
+def test_deleting_a_session_revokes_the_grants_bound_to_it():
+    """The load-bearing premise of the whole refresh design: the bound on a chain
+    is the session. Stated on deleteSession as an obligation, because a provider
+    that treats it as housekeeping leaves a session-bound grant renewing itself
+    forever after its session is gone — which no maximum-lifetime ceiling can
+    catch, since no single credential ever exceeds it."""
+    spec = yaml.safe_load(OPENAPI.read_text())
+    delete = spec["paths"]["/v1alpha1/sessions/{sessionId}"]["delete"]
+    text = delete["description"].lower()
+    assert "shall revoke the delegated grants bound to it" in text
+    assert "bounds a refresh chain" in text
+    assert "every path that deletes a session" in text
+
+
+def test_refresh_refuses_a_grant_with_no_session_binding():
+    """The bound on a refresh chain is the session. An implementer reading only
+    'expired or revoked' would allow an unbound grant to renew forever in steps
+    that never trip a maximum-lifetime ceiling, so the contract has to say it."""
+    text = json.dumps(_refresh_operation()).lower()
+    assert "no session binding" in text
+    assert "ceiling" in text, "the reason a chain without a bound matters must be stated"
+
+
+def test_a_refused_refresh_leaves_the_credential_working():
+    """The failure direction is rollback, not revoke-then-fail: a caller stranded
+    by a refusal would hold nothing and have no way to obtain anything."""
+    op = _refresh_operation()
+    text = json.dumps(op).lower()
+    assert "leave the presented credential working" in text
+    assert "rollback" in text
+    assert "keeps working" in json.dumps(op["responses"]["403"]).lower()
+
+
+def test_refresh_is_gated_on_grants_delegated_and_nothing_else():
+    """No second capability id, and no vendor extension to discover: a delegated
+    grant that cannot be refreshed is not a usable delegated grant."""
+    spec = yaml.safe_load(OPENAPI.read_text())
+    assert "grants.refresh" not in spec["components"]["schemas"]["CapabilityId"]["enum"]
+    assert set(spec["components"]["schemas"]["CapabilityId"]["enum"]) == {
+        "session.pause_resume",
+        "session.snapshot.exact",
+        "session.fork",
+        "capsule.export",
+        "capsule.import",
+        "grants.delegated",
+        "story.publish",
+        "branch.evaluation",
+    }
+    text = json.dumps(_refresh_operation()).lower()
+    assert "no separate capability id" in text and "vendor extension" in text
+
+
+def test_refresh_rotation_is_documented_in_the_readme():
+    """Task 1.3: the lockout has to be findable without reading spec deltas."""
+    readme = (CONTRACTS / "host-api" / "README.md").read_text().lower()
+    assert "grants/refresh" in readme
+    assert "locked itself out" in readme
+    assert "previous secret stops working" in readme
+
+
 def test_capability_ids_match_across_manifest_and_host_api():
     """The capability vocabulary must be identical in the manifest schema and the
     Host API discovery/enum — a drift here breaks negotiation."""

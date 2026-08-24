@@ -8,15 +8,17 @@ certify an advertised profile — see report.evaluate_conformance).
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
 from . import schemas
 from .client import HostAPIClient, new_idempotency_key
-from .config import ProviderConfig
+from .config import AcquiredDelegation, DelegatedProbe, ProviderConfig
 from .profiles import CORE
 from .report import CaseResult, Status
 
@@ -338,23 +340,369 @@ def pause_resume_roundtrip(client, config, advertised):
 #
 # These turn the ratified factory-app requirement ("workers SHALL receive
 # narrower delegated grants and SHALL not inherit the coordinator's full
-# authority") into observable behaviour. Two of them need only the ordinary
-# credential and run wherever the profile is advertised. Three need to make the
-# *same* request as two different principals, and v1alpha1 has no endpoint that
-# hands a delegated grant to a client — so they run when an operator supplies
-# the credentials the provider minted (config.DelegatedProbe) and otherwise skip
-# with that reason. A skip on an advertised profile is a violation, by design:
-# the suite refuses to certify delegation it could not watch happen.
+# authority") into observable behaviour. Two need only the ordinary credential.
+# Three need to make the *same* request as two different principals, which means
+# holding two delegated credentials.
+#
+# apps-002 could only take those from an operator, so they shipped written and
+# permanently skipped. apps-003 closes that: a provider advertising
+# `grants.delegated` offers grant refresh, and refresh is the contract's only
+# positive proof that a client holds a live delegated grant. So the suite now
+# creates its own probe session, reads the credential the provider resolved into
+# it (the `grant://` reference the manifest declares, observed through exec and
+# the event stream), confirms it by refreshing it, and lets the provider mint a
+# child beneath it. Nothing is reached around: every step is a published
+# operation, and every credential is one the provider minted.
+#
+# When any step is impossible the cases still skip, saying which step and why —
+# and a skip on an advertised profile is still a violation. The suite refuses to
+# certify delegation it could not watch happen.
 # --------------------------------------------------------------------------- #
 DELEGATED = "grants.delegated"
 
-_NO_PROBE = (
-    "no delegated credentials configured: Host API v1alpha1 has no endpoint that "
-    "hands a client a delegated grant, so the suite cannot mint a coordinator or "
-    "worker credential itself. Supply config.delegated_probe "
-    "(BARISTA_CONFORMANCE_COORDINATOR_TOKEN / _WORKER_TOKEN / _SESSION / "
-    "_DELEGATED_APP) to run this case."
-)
+
+def _no_credentials(why: str) -> str:
+    return (
+        f"the suite holds no delegated credential: {why}. It tries to obtain one "
+        "the way an app does — create a probe session from the contract's "
+        "child-authority example, read the grant the provider resolved into its "
+        "environment, and confirm it by refreshing it. Supply "
+        "config.delegated_probe (BARISTA_CONFORMANCE_DELEGATED_APP / "
+        "_COORDINATOR_TOKEN / _COORDINATOR_SESSION / _WORKER_TOKEN / "
+        "_WORKER_SESSION) to run this case from operator-supplied credentials "
+        "instead."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Obtaining and holding a delegated credential
+# --------------------------------------------------------------------------- #
+@dataclass
+class _Disposable:
+    """A grant the suite may destroy — rotate it, revoke it, let it lapse.
+
+    The shared probe credentials cannot be used for that: the cases that follow
+    still need them. So each destructive case takes one more child session under
+    the probe coordinator and uses the credential the provider minted for it.
+    """
+
+    secret: str
+    session_id: str
+
+
+def _declared_grant_env(manifest: dict) -> Optional[str]:
+    """The env var name the manifest asks to have a *grant* resolved into.
+
+    An app learns where its credential arrives from its own manifest; so does
+    the suite. This is a declared part of the contract, not a provider detail.
+    """
+    secrets = (manifest.get("permissions", {}) or {}).get("secrets", []) or []
+    for secret in secrets:
+        if str(secret.get("ref", "")).startswith("grant://"):
+            return secret["name"]
+    return None
+
+
+def _grant_env_name(config: ProviderConfig) -> Optional[str]:
+    return config.grant_env_var or _declared_grant_env(_child_authority_manifest())
+
+
+def _action_ids(actions) -> set[str]:
+    """Action ids from a grant's reported action list. A provider may report a
+    bare id or an `action@scope` pair; the id is what both forms agree on, and
+    what a manifest declares."""
+    return {str(a).split("@", 1)[0] for a in actions or ()}
+
+
+def _parse_iso(value: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_session_env(client: HostAPIClient, session_id: str, name: str) -> Optional[str]:
+    """Read one environment variable of a running session, through the contract.
+
+    This is how a client observes what an app receives: the provider resolves a
+    `grant://` reference into the session's environment, and exec plus the event
+    stream are the published way to see it. No private hook and no privilege the
+    caller did not already hold over that session.
+    """
+    started = client.exec(session_id, {"command": ["printenv", name]}, key=new_idempotency_key())
+    if started.status_code != 200:
+        return None
+    handle = started.json()
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        op = client.get_operation(handle["operation_id"])
+        if op.status_code == 200 and op.json().get("done"):
+            break
+        time.sleep(0.05)
+    chunks: list[bytes] = []
+    try:
+        for ev in client.events(session_id, cursor=handle.get("event_cursor"), max_events=20):
+            if ev.get("type") == "exec.stdout":
+                chunks.append(base64.b64decode(ev["data"]["chunk"]))
+            elif ev.get("type") == "exec.exit":
+                break
+    except Exception:  # noqa: BLE001 - acquisition is best-effort: a failure here
+        return None  # becomes a stated skip reason, never a crash
+    value = b"".join(chunks).decode("utf-8", "replace").strip()
+    return value or None
+
+
+def _confirm_delegated(client: HostAPIClient, secret: str) -> tuple[Optional[str], str]:
+    """Refresh ``secret`` and return the replacement, or why it is unusable.
+
+    This is the confirmation apps-002 could not make. A string read out of a
+    session's environment might be a dead token, or the tenant credential handed
+    back; refresh accepts only a live delegated grant, so a 200 here means the
+    suite holds delegated authority — and holds it fresh, which is what lets a
+    whole suite run finish inside one credential's life.
+    """
+    with client.as_principal(secret) as candidate:
+        resp = candidate.refresh_grant()
+    if resp.status_code != 200:
+        return None, f"refreshing it returned {resp.status_code}, so it is not a live delegated grant"
+    body = resp.json() if resp.content else {}
+    replacement = body.get("secret") if isinstance(body, dict) else None
+    if not isinstance(replacement, str) or not replacement:
+        return None, "refresh returned 200 without a replacement secret"
+    return replacement, ""
+
+
+def _acquire_delegated(client: HostAPIClient, config: ProviderConfig) -> AcquiredDelegation:
+    """Stand up a coordinator and a worker, and hold both their credentials."""
+    manifest = _child_authority_manifest()
+    app = manifest["name"]
+    created: list[str] = []
+    env_name = _grant_env_name(config)
+    if not env_name:
+        return AcquiredDelegation(
+            None,
+            "no manifest declares a grant:// secret, so nothing names the variable a "
+            "credential arrives in",
+            created,
+        )
+
+    installed = client.install_app(manifest, key=new_idempotency_key())
+    if installed.status_code not in (200, 201):
+        detail = ""
+        try:
+            body = installed.json()
+            detail = f" ({body.get('class')}/{body.get('code')}: {body.get('message')})"
+        except Exception:  # noqa: BLE001 - a non-JSON body is its own answer
+            detail = f" ({installed.text[:200]})"
+        required = [
+            c["capability"] for c in (manifest.get("capabilities", {}) or {}).get("required", [])
+        ]
+        return AcquiredDelegation(
+            None,
+            f"installing the contract's child-authority example returned "
+            f"{installed.status_code}{detail}. It declares required capabilities "
+            f"{required}; a provider that does not advertise them cannot install it, and "
+            "the suite will not substitute a manifest of its own for the contract's own "
+            "example",
+            created,
+        )
+
+    coord = client.ensure_session(
+        {"app": app, "name": "conf-probe-coordinator-" + new_idempotency_key()},
+        key=new_idempotency_key(),
+    )
+    if coord.status_code not in (200, 201):
+        return AcquiredDelegation(
+            None, f"creating a probe session returned {coord.status_code}", created
+        )
+    coordinator_session = coord.json()["id"]
+    created.append(coordinator_session)
+
+    raw = _read_session_env(client, coordinator_session, env_name)
+    if not raw:
+        return AcquiredDelegation(
+            None,
+            f"the provider resolved nothing into {env_name} in the probe session, so no "
+            "delegated credential was delivered to read",
+            created,
+        )
+    coordinator_token, why = _confirm_delegated(client, raw)
+    if coordinator_token is None:
+        return AcquiredDelegation(None, f"the value in {env_name} is unusable: {why}", created)
+
+    with client.as_principal(coordinator_token) as coordinator:
+        worker = coordinator.ensure_session(
+            {"app": app, "name": "conf-probe-worker-" + new_idempotency_key()},
+            key=new_idempotency_key(),
+        )
+        if worker.status_code not in (200, 201):
+            return AcquiredDelegation(
+                None,
+                f"the probe's own grant could not create a child session "
+                f"({worker.status_code}), so there is no child credential to compare with",
+                created,
+            )
+        worker_session = worker.json()["id"]
+        created.append(worker_session)
+        raw_worker = _read_session_env(coordinator, worker_session, env_name)
+    if not raw_worker:
+        return AcquiredDelegation(
+            None, f"the provider resolved nothing into {env_name} in the child session", created
+        )
+    if raw_worker == raw:
+        return AcquiredDelegation(
+            None,
+            "the child was handed its parent's own credential, so there are not two "
+            "principals to compare (that is itself a delegation failure, reported here "
+            "because the cases below cannot run to say so)",
+            created,
+        )
+    worker_token, why = _confirm_delegated(client, raw_worker)
+    if worker_token is None:
+        return AcquiredDelegation(None, f"the child's credential is unusable: {why}", created)
+
+    # A session neither of them created, for the scope-boundary case. Made with
+    # the ordinary credential, so its parent is nobody.
+    foreign_session = None
+    foreign = client.ensure_session(
+        {"app": app, "name": "conf-probe-foreign-" + new_idempotency_key()},
+        key=new_idempotency_key(),
+    )
+    if foreign.status_code in (200, 201):
+        foreign_session = foreign.json()["id"]
+        created.append(foreign_session)
+
+    probe = DelegatedProbe(
+        app=app,
+        coordinator_token=coordinator_token,
+        coordinator_session_id=coordinator_session,
+        worker_token=worker_token,
+        worker_session_id=worker_session,
+        foreign_session_id=foreign_session,
+    )
+    return AcquiredDelegation(
+        probe,
+        "acquired through the published contract: a probe session's credential, "
+        "confirmed by refreshing it",
+        created,
+    )
+
+
+def _keep_alive(client: HostAPIClient, probe: DelegatedProbe) -> bool:
+    """Refresh the suite's own credentials, in place.
+
+    The suite's credentials expire like any other. Refreshing between cases is
+    both what keeps a multi-case run inside one grant's life and a standing
+    demonstration that nothing caps a refresh chain (design D5). False means even
+    refresh was refused, so the credentials must be acquired again rather than
+    reported as a refusal.
+    """
+    rotated = {}
+    for field_name in ("coordinator_token", "worker_token"):
+        replacement, _ = _confirm_delegated(client, getattr(probe, field_name))
+        if replacement is None:
+            return False
+        rotated[field_name] = replacement
+    for field_name, secret in rotated.items():
+        setattr(probe, field_name, secret)
+    return True
+
+
+def delegated_credentials(
+    client: HostAPIClient, config: ProviderConfig
+) -> tuple[Optional[DelegatedProbe], str]:
+    """The two delegated credentials the delegation cases need, and how they were
+    obtained.
+
+    Operator-supplied credentials win, and are used even if refresh will not
+    renew them — that is exactly the apps-002 behaviour and it must not regress.
+    Credentials the suite acquired for itself are re-acquired when they can no
+    longer be renewed, so a long run reports refusals rather than dead tokens.
+    """
+    if config.delegated_probe is not None:
+        if config.acquired is None:
+            config.acquired = AcquiredDelegation(
+                config.delegated_probe, "operator-supplied credentials"
+            )
+        # Best effort: renew what the operator handed over, so a suite run
+        # longer than one grant lifetime does not start reporting expiry as
+        # refusal. Their own copy stops working — that is what rotation means.
+        _keep_alive(client, config.delegated_probe)
+        return config.delegated_probe, config.acquired.reason
+    if config.acquired is None:
+        config.acquired = _acquire_delegated(client, config)
+    elif config.acquired.probe is not None and not _keep_alive(client, config.acquired.probe):
+        sessions = config.acquired.sessions
+        config.acquired = _acquire_delegated(client, config)
+        config.acquired.sessions[:0] = sessions
+    return config.acquired.probe, config.acquired.reason
+
+
+def release_delegated(client: HostAPIClient, config: ProviderConfig) -> None:
+    """Delete what the acquisition created. The probe sessions are sacrificial:
+    the suite rotated the grants their own workloads were given."""
+    acquired = config.acquired
+    if acquired is None:
+        return
+    for session_id in reversed(acquired.sessions):
+        try:
+            client.delete_session(session_id, key=new_idempotency_key())
+        except Exception:  # noqa: BLE001 - cleanup must not fail a run
+            pass
+    acquired.sessions.clear()
+
+
+def _disposable_grant(
+    client: HostAPIClient, config: ProviderConfig, probe: DelegatedProbe
+) -> tuple[Optional[_Disposable], str]:
+    env_name = _grant_env_name(config)
+    if not env_name:
+        return None, "nothing names the variable a credential arrives in"
+    with client.as_principal(probe.coordinator_token) as coordinator:
+        resp = coordinator.ensure_session(
+            {"app": probe.app, "name": "conf-probe-throwaway-" + new_idempotency_key()},
+            key=new_idempotency_key(),
+        )
+        if resp.status_code not in (200, 201):
+            return None, (
+                "the coordinator could not create a child session to take a disposable "
+                f"grant from ({resp.status_code})"
+            )
+        session_id = resp.json()["id"]
+        if config.acquired is not None:
+            config.acquired.sessions.append(session_id)  # deleted when the run ends
+        secret = _read_session_env(coordinator, session_id, env_name)
+    if not secret:
+        return None, f"the provider resolved nothing into {env_name} in that child session"
+    return _Disposable(secret=secret, session_id=session_id), ""
+
+
+def _no_disposable(why: str) -> str:
+    return (
+        f"the suite could not obtain a grant it is allowed to destroy: {why}. This case "
+        "rotates, revokes or expires the grant it tests, so it will not use the shared "
+        "probe credentials the other cases still need."
+    )
+
+
+def _liveness(client: HostAPIClient, session_id: str) -> Optional[str]:
+    """An action this credential demonstrably performs right now.
+
+    Every refusal below is measured against it: 'refused after rotation' means
+    nothing unless something worked before it, and a dead credential must not be
+    mistaken for an enforced boundary.
+    """
+    if client.exec(session_id, {"command": ["true"]}, key=new_idempotency_key()).status_code == 200:
+        return "session.exec"
+    if client.get_session(session_id).status_code == 200:
+        return "session.get"
+    return None
+
+
+def _perform(client: HostAPIClient, action: str, session_id: str):
+    if action == "session.exec":
+        return client.exec(session_id, {"command": ["true"]}, key=new_idempotency_key())
+    return client.get_session(session_id)
 
 
 @case("grants.child_authority_manifest_accepted", profile=DELEGATED)
@@ -418,9 +766,9 @@ def worker_cannot_create_descendants(client, config, advertised):
     create -> the provider denies it even though the coordinator may create
     workers'. Both halves, or it proves nothing: a provider that denies create
     to everyone would otherwise pass."""
-    probe = config.delegated_probe
+    probe, why = delegated_credentials(client, config)
     if probe is None:
-        return skip("grants.worker_cannot_create_descendants", DELEGATED, _NO_PROBE)
+        return skip("grants.worker_cannot_create_descendants", DELEGATED, _no_credentials(why))
 
     with client.as_principal(probe.worker_token) as worker, client.as_principal(
         probe.coordinator_token
@@ -461,9 +809,9 @@ def child_receives_only_declared_subset(client, config, advertised):
     """A child receives *only* what the manifest declares for it. An action the
     coordinator holds over that same session, and the child was not given, must
     be refused to the child — as authorization, not as 'not found'."""
-    probe = config.delegated_probe
+    probe, why = delegated_credentials(client, config)
     if probe is None:
-        return skip("grants.child_receives_only_declared_subset", DELEGATED, _NO_PROBE)
+        return skip("grants.child_receives_only_declared_subset", DELEGATED, _no_credentials(why))
     if probe.scoped_action != "session.get":
         return skip(
             "grants.child_receives_only_declared_subset",
@@ -513,9 +861,9 @@ def authority_stops_at_own_children(client, config, advertised):
     """A 'created_sessions' scope is not a licence over the account. The same
     action the coordinator may perform on a session it created must be refused
     against a session it did not."""
-    probe = config.delegated_probe
+    probe, why = delegated_credentials(client, config)
     if probe is None:
-        return skip("grants.authority_stops_at_own_children", DELEGATED, _NO_PROBE)
+        return skip("grants.authority_stops_at_own_children", DELEGATED, _no_credentials(why))
     if not probe.foreign_session_id:
         return skip(
             "grants.authority_stops_at_own_children",
@@ -561,4 +909,467 @@ def authority_stops_at_own_children(client, config, advertised):
         "grants.authority_stops_at_own_children",
         DELEGATED,
         "coordinator reached the session it created and was refused on one it did not",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Optional profile: grants.delegated — refreshing a held grant (apps-003)
+#
+# The security argument for refresh is mechanical: the replacement's scope comes
+# from the stored grant, so there is no input a caller could widen with. These
+# cases hold that argument to the wire. Each asserts BOTH sides — a provider
+# that refuses everything must fail, not pass — and the acquisition above is
+# itself a both-sides gate: a provider that denied its own probe session the
+# right to create a child never reaches these cases at all.
+# --------------------------------------------------------------------------- #
+@case("grants.refresh_preserves_exactly_the_presented_scope", profile=DELEGATED)
+def refresh_preserves_scope(client, config, advertised):
+    """The replacement authorizes exactly what the presented grant did — no
+    more, no fewer — and says so consistently across a rotation."""
+    cid = "grants.refresh_preserves_exactly_the_presented_scope"
+    probe, why = delegated_credentials(client, config)
+    if probe is None:
+        return skip(cid, DELEGATED, _no_credentials(why))
+    grant, why = _disposable_grant(client, config, probe)
+    if grant is None:
+        return skip(cid, DELEGATED, _no_disposable(why))
+
+    with client.as_principal(grant.secret) as holder:
+        first = holder.refresh_grant()
+    assert first.status_code == 200, (
+        f"refreshing a live delegated grant must succeed, got {first.status_code}: {first.text}"
+    )
+    body = first.json()
+    schemas.assert_valid(schemas.component_validator("RefreshedGrant"), body, "RefreshedGrant")
+    assert body["secret"] != grant.secret, (
+        "refresh returned the secret it was given: that is an extension of the same "
+        "credential, not a rotation"
+    )
+    reported = _action_ids(body["actions"])
+    assert reported, "a grant that authorizes nothing is not a grant"
+    expires = _parse_iso(body["expires_at"])
+    assert expires is not None, f"expires_at is not an ISO-8601 instant: {body['expires_at']!r}"
+    assert expires > datetime.now(timezone.utc), (
+        f"the replacement is already expired ({body['expires_at']}), so nothing was renewed"
+    )
+
+    # Rotating again must not drift the scope: refresh keeps authority, and
+    # 'keeps' has to survive being exercised more than once (design D5).
+    with client.as_principal(body["secret"]) as holder:
+        second = holder.refresh_grant()
+    assert second.status_code == 200, (
+        f"a replacement must itself be refreshable, got {second.status_code}"
+    )
+    again = second.json()
+    schemas.assert_valid(schemas.component_validator("RefreshedGrant"), again, "RefreshedGrant")
+    assert _action_ids(again["actions"]) == reported, (
+        f"the scope drifted across a refresh: {sorted(reported)} became "
+        f"{sorted(_action_ids(again['actions']))}"
+    )
+    assert again["resource"] == body["resource"], (
+        f"the resource changed across a refresh: {body['resource']!r} -> {again['resource']!r}"
+    )
+
+    # An independent source of truth, when the probe app is the contract's own
+    # example: the child authority its manifest declares. Without this, 'no more
+    # and no fewer' would only be measured against the provider's own answer.
+    manifest = _child_authority_manifest()
+    checked_against_manifest = False
+    if probe.app == manifest["name"]:
+        declared = {
+            g.action
+            for g in schemas.manifest_rules().normalize(
+                manifest["permissions"]["child_sessions"]["actions"]
+            )
+        }
+        assert reported == declared, (
+            f"the replacement authorizes {sorted(reported)}, but the manifest declares "
+            f"{sorted(declared)} for a child session: refresh changed what the grant may do"
+        )
+        checked_against_manifest = True
+
+    # And behaviourally, both sides.
+    with client.as_principal(again["secret"]) as holder:
+        if "session.exec" in reported:
+            allowed = holder.exec(
+                grant.session_id, {"command": ["true"]}, key=new_idempotency_key()
+            )
+            assert allowed.status_code == 200, (
+                "the replacement must still authorize session.exec on the grant's own "
+                f"session, got {allowed.status_code}: authority was lost, not kept"
+            )
+        if "session.get" not in reported:
+            refused = holder.get_session(grant.session_id)
+            assert refused.status_code >= 400, (
+                "the replacement authorizes session.get, which the presented grant did "
+                "not: refresh widened the grant"
+            )
+            schemas.assert_valid(schemas.component_validator("Error"), refused.json(), "Error")
+            assert refused.json()["class"] == "authorization", (
+                f"unexpected error class {refused.json()['class']}"
+            )
+
+    return ok(
+        cid,
+        DELEGATED,
+        f"replacement authorizes exactly {sorted(reported)}"
+        + (" (matching the manifest's declared child authority)" if checked_against_manifest else "")
+        + ", unchanged across two rotations",
+    )
+
+
+@case("grants.refresh_rotates_the_previous_secret", profile=DELEGATED)
+def refresh_rotates_the_previous_secret(client, config, advertised):
+    """The previous secret stops working. Without this, refresh is an expiry
+    extension and a leaked secret is worth the session's whole lifetime."""
+    cid = "grants.refresh_rotates_the_previous_secret"
+    probe, why = delegated_credentials(client, config)
+    if probe is None:
+        return skip(cid, DELEGATED, _no_credentials(why))
+    grant, why = _disposable_grant(client, config, probe)
+    if grant is None:
+        return skip(cid, DELEGATED, _no_disposable(why))
+
+    with client.as_principal(grant.secret) as holder:
+        action = _liveness(holder, grant.session_id)
+        if action is None:
+            return skip(
+                cid,
+                DELEGATED,
+                "the disposable grant performs neither session.exec nor session.get on its "
+                "own session, so there is no action whose refusal after a rotation would "
+                "mean anything",
+            )
+        rotated = holder.refresh_grant()
+    assert rotated.status_code == 200, f"refresh returned {rotated.status_code}: {rotated.text}"
+    replacement = rotated.json()["secret"]
+
+    with client.as_principal(replacement) as holder:
+        live = _perform(holder, action, grant.session_id)
+        assert live.status_code == 200, (
+            f"the replacement cannot perform {action}, which the grant it replaced could "
+            f"({live.status_code}): the rotation lost the authority instead of keeping it"
+        )
+
+    with client.as_principal(grant.secret) as stale:
+        dead = _perform(stale, action, grant.session_id)
+        assert dead.status_code >= 400, (
+            f"the previous secret still performs {action} after the refresh: rotation "
+            "degenerated into extension, and a leaked secret is now good for the whole "
+            "session"
+        )
+        schemas.assert_valid(schemas.component_validator("Error"), dead.json(), "Error")
+        assert dead.json()["class"] in ("authentication", "authorization"), (
+            f"unexpected error class {dead.json()['class']}"
+        )
+        again = stale.refresh_grant()
+        assert again.status_code >= 400, (
+            "the replaced secret could still be refreshed, so it never stopped being a "
+            "live credential"
+        )
+
+    return ok(
+        cid,
+        DELEGATED,
+        f"{action} works with the replacement and is refused with the secret it replaced "
+        f"({dead.json()['class']}); the replaced secret cannot be refreshed either",
+    )
+
+
+@case("grants.refresh_cannot_widen_authority", profile=DELEGATED)
+def refresh_cannot_widen_authority(client, config, advertised):
+    """A refresh request carrying a scope of its own changes nothing. The
+    contract declares no request body; a provider that reads one has implemented
+    the `grant.issue` action this contract deliberately does not have."""
+    cid = "grants.refresh_cannot_widen_authority"
+    probe, why = delegated_credentials(client, config)
+    if probe is None:
+        return skip(cid, DELEGATED, _no_credentials(why))
+    grant, why = _disposable_grant(client, config, probe)
+    if grant is None:
+        return skip(cid, DELEGATED, _no_disposable(why))
+
+    with client.as_principal(grant.secret) as holder:
+        action = _liveness(holder, grant.session_id)
+        baseline = holder.refresh_grant()
+    assert baseline.status_code == 200, f"refresh returned {baseline.status_code}"
+    base = baseline.json()
+    base_actions = _action_ids(base["actions"])
+
+    manifest = _child_authority_manifest()
+    asked = sorted(
+        {g.action for g in schemas.manifest_rules().normalize(manifest["permissions"]["actions"])}
+        | {"session.create", "session.delete"}
+    )
+    assert not set(asked) <= base_actions, (
+        "fixture drifted: the child already holds everything this case asks for, so "
+        "asking for it proves nothing"
+    )
+    escalation = sorted(set(asked) - base_actions)
+
+    with client.as_principal(base["secret"]) as holder:
+        widened = holder.refresh_grant({"resource": "*", "actions": asked})
+
+    if widened.status_code >= 400:
+        # Refusing an unexpected body outright cannot widen either — but it must
+        # be a refusal of the *request*, not a broken endpoint or a lost grant.
+        schemas.assert_valid(schemas.component_validator("Error"), widened.json(), "Error")
+        assert widened.json()["class"] == "invalid_request", (
+            f"a refresh carrying a body must be either ignored or refused as an invalid "
+            f"request, got {widened.status_code} / {widened.json()['class']}"
+        )
+        with client.as_principal(base["secret"]) as holder:
+            assert holder.refresh_grant().status_code == 200, (
+                "the refused body invalidated the grant, which is neither ignoring it nor "
+                "refusing it"
+            )
+        return ok(
+            cid,
+            DELEGATED,
+            f"a refresh body asking for {escalation} was refused as an invalid request; "
+            "the grant is unchanged",
+        )
+
+    assert widened.status_code == 200, f"unexpected status {widened.status_code}"
+    scoped = widened.json()
+    schemas.assert_valid(schemas.component_validator("RefreshedGrant"), scoped, "RefreshedGrant")
+    assert _action_ids(scoped["actions"]) == base_actions, (
+        f"the request asked for {escalation} and the replacement now authorizes "
+        f"{sorted(_action_ids(scoped['actions']))} instead of {sorted(base_actions)}: the "
+        "scope came from the request, which is issuance, not refresh"
+    )
+    assert scoped["resource"] == base["resource"], (
+        f"the request named a resource and got it: {scoped['resource']!r} instead of "
+        f"{base['resource']!r}"
+    )
+
+    with client.as_principal(scoped["secret"]) as holder:
+        created = holder.ensure_session(
+            {"app": probe.app, "name": "conf-probe-widened-" + new_idempotency_key()},
+            key=new_idempotency_key(),
+        )
+        if created.status_code < 400:
+            client.delete_session(created.json()["id"], key=new_idempotency_key())
+            raise AssertionError(
+                "the refreshed grant created a session, which the grant it replaced could "
+                "not: refresh conferred authority rather than keeping it"
+            )
+        schemas.assert_valid(schemas.component_validator("Error"), created.json(), "Error")
+        if action is not None:
+            still = _perform(holder, action, grant.session_id)
+            assert still.status_code == 200, (
+                f"the replacement can no longer perform {action}: the refusal above is a "
+                "dead credential, not an enforced boundary"
+            )
+
+    return ok(
+        cid,
+        DELEGATED,
+        f"a refresh body asking for {escalation} was ignored: the replacement still "
+        f"authorizes exactly {sorted(base_actions)} and is still refused session.create",
+    )
+
+
+@case("grants.refresh_refused_after_revocation", profile=DELEGATED)
+def refresh_refused_after_revocation(client, config, advertised):
+    """A revoked grant cannot be revived, or revocation is a suggestion. The one
+    revocation path a black-box client has is deleting the session the grant is
+    bound to (design D5)."""
+    cid = "grants.refresh_refused_after_revocation"
+    probe, why = delegated_credentials(client, config)
+    if probe is None:
+        return skip(cid, DELEGATED, _no_credentials(why))
+    grant, why = _disposable_grant(client, config, probe)
+    if grant is None:
+        return skip(cid, DELEGATED, _no_disposable(why))
+
+    # While live, it IS refreshable. Assert it, or "refused after revocation"
+    # cannot be told apart from a provider that refuses every refresh.
+    with client.as_principal(grant.secret) as holder:
+        live = holder.refresh_grant()
+    assert live.status_code == 200, (
+        f"a live grant must be refreshable, got {live.status_code}: without that half, "
+        "the refusal below proves nothing"
+    )
+    token = live.json()["secret"]
+
+    with client.as_principal(probe.coordinator_token) as coordinator:
+        gone = coordinator.delete_session(grant.session_id, key=new_idempotency_key())
+    if gone.status_code >= 400:
+        gone = client.delete_session(grant.session_id, key=new_idempotency_key())
+    if gone.status_code >= 400:
+        return skip(
+            cid,
+            DELEGATED,
+            f"the grant's session could not be deleted ({gone.status_code}), and deleting "
+            "the session a grant is bound to is the only revocation a client can perform "
+            "through the published contract",
+        )
+
+    # Deletion may be asynchronous; give revocation a bounded moment to land.
+    deadline = time.time() + 10
+    after = None
+    while time.time() < deadline:
+        with client.as_principal(token) as holder:
+            after = holder.refresh_grant()
+        if after.status_code >= 400:
+            break
+        time.sleep(0.1)
+    assert after is not None and after.status_code >= 400, (
+        "a grant whose session was deleted could still be refreshed. Deleting a session "
+        "SHALL revoke the grants bound to it (Host API deleteSession): the session is the "
+        "only thing that bounds a refresh chain, so without that this credential renews "
+        "itself forever with nothing left to end it — and no maximum-lifetime ceiling "
+        "catches it, because no single credential ever exceeds one"
+    )
+    schemas.assert_valid(schemas.component_validator("Error"), after.json(), "Error")
+    assert after.json()["class"] in ("authentication", "authorization"), (
+        f"unexpected error class {after.json()['class']}"
+    )
+    return ok(
+        cid,
+        DELEGATED,
+        f"refreshable while live, refused once revoked ({after.json()['class']})",
+    )
+
+
+@case("grants.refresh_refused_after_expiry", profile=DELEGATED)
+def refresh_refused_after_expiry(client, config, advertised):
+    """An expired grant cannot be revived, or expiry is advisory.
+
+    Expiry is the one half of that requirement no request can produce: it
+    happens by the clock. So this case reads the lifetime the provider itself
+    reported and waits it out when that is affordable, and otherwise skips
+    saying exactly what would make it provable. It does not pass on the strength
+    of the revocation case next door.
+    """
+    cid = "grants.refresh_refused_after_expiry"
+    probe, why = delegated_credentials(client, config)
+    if probe is None:
+        return skip(cid, DELEGATED, _no_credentials(why))
+    grant, why = _disposable_grant(client, config, probe)
+    if grant is None:
+        return skip(cid, DELEGATED, _no_disposable(why))
+
+    with client.as_principal(grant.secret) as holder:
+        action = _liveness(holder, grant.session_id)
+        live = holder.refresh_grant()
+    assert live.status_code == 200, f"a live grant must be refreshable, got {live.status_code}"
+    body = live.json()
+    token = body["secret"]
+    expires = _parse_iso(body["expires_at"])
+    assert expires is not None, f"expires_at is not an ISO-8601 instant: {body['expires_at']!r}"
+
+    # expires_at may be truncated to whole seconds, so allow a second of slack
+    # plus a second for clock skew between the suite and the provider.
+    remaining = (expires - datetime.now(timezone.utc)).total_seconds()
+    if remaining > config.expiry_wait_seconds:
+        return skip(
+            cid,
+            DELEGATED,
+            f"this provider's delegated grants live about {remaining:.0f}s, and proving "
+            f"that an expired one is refused means waiting that long, which exceeds the "
+            f"suite's {config.expiry_wait_seconds:.0f}s budget. Run the suite against a "
+            "tenant configured with a short grant lifetime, or raise "
+            f"BARISTA_CONFORMANCE_EXPIRY_WAIT_SECONDS above {remaining:.0f}. Passing "
+            "without observing it would certify expiry on the strength of the revocation "
+            "case, which is a different requirement"
+        )
+
+    time.sleep(max(0.0, remaining) + 2.0)
+
+    with client.as_principal(token) as holder:
+        after = holder.refresh_grant()
+        assert after.status_code >= 400, (
+            "an expired grant could still be refreshed, so its expiry was advisory and a "
+            "leaked secret never stops being renewable"
+        )
+        schemas.assert_valid(schemas.component_validator("Error"), after.json(), "Error")
+        assert after.json()["class"] in ("authentication", "authorization"), (
+            f"unexpected error class {after.json()['class']}"
+        )
+        if action is not None:
+            dead = _perform(holder, action, grant.session_id)
+            assert dead.status_code >= 400, (
+                f"the expired grant can still perform {action}, so it did not expire at "
+                "all and the refusal above says nothing about expiry"
+            )
+
+    return ok(
+        cid,
+        DELEGATED,
+        f"refreshable while live; after its {remaining:.0f}s lifetime elapsed, refresh was "
+        f"refused ({after.json()['class']}) and the grant could no longer act",
+    )
+
+
+@case("grants.refresh_refuses_a_credential_with_nothing_to_refresh", profile=DELEGATED)
+def refresh_refuses_a_non_grant(client, config, advertised):
+    """Two credentials refresh must refuse, for the same reason from two
+    directions: a tenant credential (it holds authority directly — there is no
+    grant to rotate, and answering it would make refresh a way to *obtain*
+    delegated authority) and a grant bound to no session (there is a grant, but
+    nothing to end its chain, so it would renew past any maximum-lifetime
+    ceiling in steps that never individually exceed it).
+
+    An unbound grant cannot be produced by a black-box client — every credential
+    it can obtain arrives inside a session — so that half is asserted when the
+    provider can supply one (`BARISTA_CONFORMANCE_UNBOUND_GRANT`). The case's
+    both-sides evidence does not depend on it: the same endpoint is shown
+    accepting a session-bound grant below.
+    """
+    cid = "grants.refresh_refuses_a_credential_with_nothing_to_refresh"
+    refused = client.refresh_grant()
+    assert refused.status_code >= 400, (
+        f"refresh returned {refused.status_code} to the ordinary credential, which holds "
+        "no grant: that is an operation for obtaining delegated authority, not for "
+        "keeping it"
+    )
+    schemas.assert_valid(schemas.component_validator("Error"), refused.json(), "Error")
+    assert refused.json()["class"] in ("authentication", "authorization"), (
+        f"unexpected error class {refused.json()['class']}"
+    )
+
+    # Both sides: the same endpoint accepts a real delegated grant.
+    probe, why = delegated_credentials(client, config)
+    if probe is None:
+        return skip(cid, DELEGATED, _no_credentials(why))
+    grant, why = _disposable_grant(client, config, probe)
+    if grant is None:
+        return skip(cid, DELEGATED, _no_disposable(why))
+    with client.as_principal(grant.secret) as holder:
+        accepted = holder.refresh_grant()
+    assert accepted.status_code == 200, (
+        f"the same endpoint refused a live delegated grant too ({accepted.status_code}), so "
+        "the refusal above is not about having nothing to refresh"
+    )
+
+    unbound = "not supplied"
+    if config.unbound_grant:
+        with client.as_principal(config.unbound_grant) as holder:
+            denied = holder.refresh_grant()
+            assert denied.status_code >= 400, (
+                "a grant bound to no session was refreshed: nothing ends that chain, so "
+                "its holder renews past any maximum-lifetime ceiling in steps that never "
+                "individually exceed it, and no single observation looks wrong"
+            )
+            schemas.assert_valid(schemas.component_validator("Error"), denied.json(), "Error")
+            assert denied.json()["class"] == "authorization", (
+                "an unbound grant authenticates fine — it is refused for what it is, so "
+                f"the class must be authorization, not {denied.json()['class']}"
+            )
+            # A refusal must not strand the caller: the failure direction is
+            # rollback, so the presented credential still works afterwards.
+            still = holder.refresh_grant()
+            assert still.status_code == denied.status_code, (
+                "the refusal changed the credential's state: a refused refresh must leave "
+                "the presented secret exactly as it was"
+            )
+        unbound = f"refused ({denied.json()['class']}/{denied.json()['code']})"
+
+    return ok(
+        cid,
+        DELEGATED,
+        f"refused for a credential holding no grant ({refused.json()['class']}), accepted "
+        f"for a session-bound grant; unbound grant: {unbound}",
     )

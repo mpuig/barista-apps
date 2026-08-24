@@ -34,9 +34,21 @@ class TaskState:
 class MissionState:
     mission: str
     coordinator_session_id: Optional[str] = None
-    state: str = "running"  # running|done
+    state: str = "running"  # running|done|lost_authority
     started_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     finished_at: Optional[str] = None
+    authority_lost: Optional[str] = None
+    """Why the coordinator can no longer act, if that is what ended the mission.
+
+    Separate from any task's state on purpose. A lapsed or refused credential
+    says nothing about the work: it is an operator problem (provision a new
+    grant), and a mission that recorded it as a failed task would send someone
+    to debug a task that never ran.
+    """
+    credential: dict = field(default_factory=dict)
+    """How the coordinator's own credential was kept alive: whether refresh was
+    active, how many times it rotated, the observed lifetime, and the margin it
+    refreshed on. Recorded so the choice is auditable after the fact."""
     tasks: dict[str, TaskState] = field(default_factory=dict)
     _path: Optional[Path] = None
     # Guards mutate+save sequences: coordinator worker threads share this state,
@@ -76,6 +88,8 @@ class MissionState:
             "state": self.state,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "authority_lost": self.authority_lost,
+            "credential": self.credential,
             "tasks": {tid: asdict(ts) for tid, ts in self.tasks.items()},
         }
 
@@ -85,9 +99,13 @@ class MissionState:
         return cls(
             mission=d["mission"],
             coordinator_session_id=d.get("coordinator_session_id"),
-            state=d.get("state", "running"),
+            # A restart is a fresh attempt at the work: the previous run's lost
+            # authority is history, not the new run's outcome.
+            state="running" if d.get("state") == "lost_authority" else d.get("state", "running"),
             started_at=d.get("started_at"),
             finished_at=d.get("finished_at"),
+            authority_lost=None,
+            credential=d.get("credential", {}),
             tasks=tasks,
         )
 
