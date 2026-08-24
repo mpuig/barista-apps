@@ -42,6 +42,12 @@ name.
   *references*, egress, concurrency, attempts, deadline, and budgets. Workers
   receive a strictly narrower grant (no child-session creation) and see secret
   references, never raw values.
+- **The provider is the only minter** — `manifest.json` declares what a worker
+  receives (`permissions.child_sessions.actions`) and that a worker may not
+  create sessions of its own (`allow_descendants: false`). Factory asks for a
+  worker session; the *provider* mints that worker's grant from the same
+  manifest. Factory never handles a credential it did not receive itself, and
+  the coordinator's own credential is a `grant://` reference, not a tenant key.
 
 ## Tests
 

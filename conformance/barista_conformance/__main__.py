@@ -13,7 +13,7 @@ import json
 import sys
 
 from . import CONTRACT_VERSION, SUITE_VERSION
-from .config import ProviderConfig
+from .config import DelegatedProbe, ProviderConfig
 from .report import evaluate_conformance
 from .runner import run_conformance
 
@@ -48,6 +48,9 @@ def main(argv: list[str] | None = None) -> int:
             provider_name=args.provider_name,
             provider_version=args.provider_version,
             standalone=args.standalone,
+            # Delegated credentials always come from the environment — they are
+            # credentials, and argv is not a place to put one.
+            delegated_probe=DelegatedProbe.from_env(),
         )
 
     report = run_conformance(

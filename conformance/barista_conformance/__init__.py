@@ -6,7 +6,7 @@ and it runs offline against any conformant endpoint — including, mandatorily,
 one with Barista Cloud unreachable.
 """
 
-from .config import ProviderConfig
+from .config import DelegatedProbe, ProviderConfig
 from .report import ConformanceReport, evaluate_conformance
 from .runner import run_conformance
 
@@ -15,6 +15,7 @@ CONTRACT_VERSION = "v1alpha1"
 
 __all__ = [
     "ProviderConfig",
+    "DelegatedProbe",
     "ConformanceReport",
     "evaluate_conformance",
     "run_conformance",

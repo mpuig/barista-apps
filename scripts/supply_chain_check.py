@@ -5,6 +5,10 @@ Enforces, and fails loudly on:
   * every app manifest workload is pinned to an immutable digest (no mutable tag);
   * every app manifest validates against the published App Manifest schema and
     carries reference-only secrets (never plaintext);
+  * every app manifest also passes the rules JSON Schema *cannot* express —
+    above all that a child session's actions are a subset of the app's own
+    (contracts/app-manifest/v1alpha1/rules.py). The schema does not enforce
+    that; a manifest that over-delegates validates cleanly;
   * every Python package pins the SDK via a uv path source and ships a uv.lock
     (reproducible builds; no floating cross-package dependency);
   * the contract schemas parse and the Session Story content id is deterministic
@@ -29,8 +33,14 @@ problems: list[str] = []
 def check_manifests() -> None:
     from jsonschema import Draft202012Validator
 
-    schema = json.loads((REPO / "contracts" / "app-manifest" / "v1alpha1" / "schema.json").read_text())
+    contract_dir = REPO / "contracts" / "app-manifest" / "v1alpha1"
+    schema = json.loads((contract_dir / "schema.json").read_text())
     validator = Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+
+    # The semantic rules live beside the schema because they are part of the
+    # contract even though JSON Schema cannot carry them.
+    sys.path.insert(0, str(contract_dir))
+    import rules  # noqa: PLC0415
 
     manifests = sorted(REPO.glob("apps/*/manifest.json"))
     if not manifests:
@@ -42,6 +52,8 @@ def check_manifests() -> None:
         if errs:
             problems.append(f"{rel}: schema invalid: {errs[0].message}")
             continue
+        for violation in rules.check_manifest(manifest):
+            problems.append(f"{rel}: {violation}")
         digest = manifest["workload"]["digest"]
         if not DIGEST_OK.match(digest):
             problems.append(f"{rel}: workload.digest is not a pinned digest: {digest!r}")

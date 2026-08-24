@@ -10,9 +10,12 @@ standalone JSON Schema document (``#/components/schemas/X`` rewritten to
 from __future__ import annotations
 
 import functools
+import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import yaml
@@ -64,6 +67,28 @@ def _json_schema(*parts: str) -> Draft202012Validator:
 
 def manifest_validator() -> Draft202012Validator:
     return _json_schema("app-manifest", "v1alpha1", "schema.json")
+
+
+@functools.lru_cache(maxsize=1)
+def manifest_rules() -> ModuleType:
+    """The App Manifest rules JSON Schema cannot express, loaded from the same
+    contracts tree the suite reads its schemas from.
+
+    The subset rule between ``child_sessions.actions`` and
+    ``permissions.actions`` is not in ``schema.json`` and cannot be — so the
+    suite reuses the contract's reference implementation instead of keeping a
+    second copy that could disagree with it.
+    """
+    path = _contracts_dir() / "app-manifest" / "v1alpha1" / "rules.py"
+    spec = importlib.util.spec_from_file_location("barista_manifest_rules", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise RuntimeError(f"cannot load manifest rules from {path}")
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec: the module defines dataclasses, and @dataclass
+    # resolves annotations through sys.modules[cls.__module__].
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def event_validator() -> Draft202012Validator:

@@ -197,6 +197,54 @@ def test_manifest_and_mission_schema_are_valid(tmp_path):
     assert manifest["permissions"]["child_sessions"]["max_concurrent"] >= 1
 
 
+def test_manifest_worker_authority_matches_the_code_that_derives_it():
+    """`grants.py` narrows a worker's authority in the coordinator; the manifest
+    declares the same narrowing so the *provider* enforces it (design D2). The
+    two must not drift — a manifest saying one thing while the code says another
+    is how the ratified scenario ended up with nothing behind it.
+    """
+    sys.path.insert(0, str(REPO / "contracts" / "app-manifest" / "v1alpha1"))
+    import rules  # noqa: PLC0415
+
+    permissions = json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())["permissions"]
+    child = permissions["child_sessions"]
+
+    worker = rules.normalize(child["actions"])
+    assert tuple(g.action for g in worker) == WORKER_ACTIONS
+    assert all(g.scope == "own_session" for g in worker), "a worker acts on itself, nothing else"
+
+    # The ratified scenario, both halves: the coordinator may create sessions,
+    # a worker may not, and no descendant policy is left to be inferred.
+    coordinator = {g.action for g in rules.normalize(permissions["actions"])}
+    assert "session.create" in coordinator
+    assert "session.create" not in {g.action for g in worker}
+    assert child["allow_descendants"] is False
+
+    # And the manifest itself must be semantically clean, not merely well-shaped.
+    assert not rules.check_manifest(
+        json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())
+    )
+
+
+def test_coordinator_authenticates_with_a_delegated_grant(monkeypatch):
+    """The coordinator gets a grant:// credential in the env var the SDK reads —
+    not a tenant key. A grant, not a key, is what keeps the provider the only
+    minter: the coordinator holds authority it cannot widen or pass on."""
+    secrets = json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())[
+        "permissions"
+    ]["secrets"]
+    refs = {s["name"]: s["ref"] for s in secrets}
+    assert refs["BARISTA_HOST_API_TOKEN"].startswith("grant://"), refs
+    assert refs["NOTIFY_TOKEN"].startswith("secret://"), "a secret is not a grant"
+
+    # The declared name is wired to the client, not decorative: this is the
+    # variable Config.from_env() reads, so a provider that resolves the
+    # grant:// ref into it has authenticated the coordinator.
+    monkeypatch.setenv("BARISTA_HOST_API_ENDPOINT", "http://127.0.0.1:1")
+    monkeypatch.setenv("BARISTA_HOST_API_TOKEN", "resolved-delegated-grant")
+    assert Config.from_env().resolved_token() == "resolved-delegated-grant"
+
+
 def test_recovered_running_task_reuses_attempt_no_duplicate_worker(tmp_path):
     """A task persisted as 'running' (mid-flight crash) must re-ensure the SAME
     worker on recovery, not bump the attempt and orphan a duplicate (finding 8).

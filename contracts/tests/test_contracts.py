@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,12 @@ from jsonschema import Draft202012Validator
 from jsonschema.validators import validator_for
 
 CONTRACTS = Path(__file__).resolve().parents[1]
+REPO = CONTRACTS.parent
 MANIFEST_SCHEMA = CONTRACTS / "app-manifest" / "v1alpha1" / "schema.json"
+
+# The rules JSON Schema cannot express live beside the schema itself.
+sys.path.insert(0, str(MANIFEST_SCHEMA.parent))
+import rules  # noqa: E402
 STORY_SCHEMA = CONTRACTS / "session-story" / "v1alpha1" / "schema.json"
 SEMANTIC_SCHEMA = CONTRACTS / "session-story" / "v1alpha1" / "semantic-state.schema.json"
 OPENAPI = CONTRACTS / "host-api" / "v1alpha1" / "openapi.yaml"
@@ -87,6 +93,214 @@ def test_plaintext_secret_is_rejected():
     manifest["permissions"] = {"secrets": [{"name": "API_KEY", "ref": "ok", "value": "sk-live-xyz"}]}
     errors = list(_manifest_validator().iter_errors(manifest))
     assert errors, "a secret entry with a plaintext 'value' must be rejected"
+
+
+# --------------------------------------------------------------------------- #
+# Action scope + child-session authority (apps-002).
+#
+# The schema carries shape; the subset rule between child_sessions.actions and
+# permissions.actions is NOT expressible in JSON Schema and is NOT enforced by
+# it. These tests pin both halves: what the schema catches, and what only
+# rules.py catches.
+# --------------------------------------------------------------------------- #
+def _with_permissions(**permissions) -> dict:
+    manifest = load_json(MANIFEST_SCHEMA.parent / "examples" / "minimal.json")
+    manifest["permissions"] = permissions
+    return manifest
+
+
+def _schema_errors(manifest: dict) -> list:
+    return list(_manifest_validator().iter_errors(manifest))
+
+
+SEMANTICALLY_INVALID = sorted((MANIFEST_SCHEMA.parent / "semantically-invalid").glob("*.json"))
+APP_MANIFESTS = sorted(REPO.glob("apps/*/manifest.json"))
+
+
+def test_semantically_invalid_directory_is_not_empty():
+    assert SEMANTICALLY_INVALID, "the schema's limits must be documented by fixtures"
+
+
+@pytest.mark.parametrize("fixture", SEMANTICALLY_INVALID, ids=lambda p: p.name)
+def test_semantically_invalid_fixtures_pass_schema_but_fail_the_rules(fixture: Path):
+    """The whole point of task 1.4: these validate structurally and must still be
+    refused. If a fixture here ever fails the schema, the fixture — not the
+    schema — has drifted, and it stops proving anything."""
+    manifest = load_json(fixture)
+    assert not _schema_errors(manifest), (
+        f"{fixture.name} must PASS the schema; it exists to show what the schema cannot see"
+    )
+    violations = rules.check_manifest(manifest)
+    assert violations, f"{fixture.name} must be refused by the semantic rules"
+    # A refusal has to name what exceeded what — "invalid manifest" is not usable.
+    assert all(v.actions for v in violations), [str(v) for v in violations]
+
+
+def test_child_actions_exceeding_the_app_are_identifiable_though_not_by_the_schema():
+    """A child action the app does not hold. The schema accepts it; the rule
+    names it. Both halves asserted together so neither can quietly change."""
+    manifest = _with_permissions(
+        actions=["session.create", {"action": "session.exec", "scope": "created_sessions"}],
+        child_sessions={"max_concurrent": 2, "actions": ["session.delete"]},
+    )
+    assert not _schema_errors(manifest), "JSON Schema cannot relate the two lists — it must accept this"
+    violations = rules.check_manifest(manifest)
+    assert [v.rule for v in violations] == ["child_actions_exceed_app"]
+    assert violations[0].actions == ("session.delete",)
+
+
+def test_downward_delegation_requires_the_app_to_hold_it_downwards():
+    manifest = _with_permissions(
+        actions=["session.create", {"action": "session.exec", "scope": "own_session"}],
+        child_sessions={
+            "allow_descendants": True,
+            "actions": ["session.create", {"action": "session.exec", "scope": "created_sessions"}],
+        },
+    )
+    assert not _schema_errors(manifest)
+    rule_ids = {v.rule for v in rules.check_manifest(manifest)}
+    assert "child_created_scope_exceeds_app_scope" in rule_ids
+
+
+def test_duplicate_action_scope_is_identifiable():
+    """`uniqueItems` cannot see that a bare id and scope 'own_session' are the
+    same grant, so the rule has to."""
+    manifest = _with_permissions(
+        actions=["session.exec", {"action": "session.exec", "scope": "own_session"}]
+    )
+    assert not _schema_errors(manifest)
+    violations = rules.check_manifest(manifest)
+    assert [v.rule for v in violations] == ["duplicate_action_scope"]
+    assert violations[0].actions == ("session.exec@own_session",)
+
+
+def test_session_create_takes_no_scope():
+    """It is collection-level and bounded by child_sessions, not by a scope. The
+    schema rejects the object form rather than leave a provider guessing."""
+    assert not _schema_errors(_with_permissions(actions=["session.create"]))
+    assert _schema_errors(
+        _with_permissions(actions=[{"action": "session.create", "scope": "created_sessions"}])
+    ), "a scope on session.create must be rejected"
+    assert _schema_errors(_with_permissions(actions=[{"action": "session.create"}]))
+
+
+def test_object_form_always_states_its_scope():
+    """No path to a wide scope by omission: scope is required in the object form
+    and only a bare action id may mean 'own_session'."""
+    assert _schema_errors(_with_permissions(actions=[{"action": "session.exec"}]))
+    assert _schema_errors(_with_permissions(actions=[{"action": "session.exec", "scope": "any_session"}]))
+    assert not _schema_errors(_with_permissions(actions=[{"action": "session.exec", "scope": "own_session"}]))
+
+
+def test_a_child_may_not_be_given_session_create_without_allow_descendants():
+    """The ratified factory-app scenario, as far up as the schema can carry it."""
+    for child in (
+        {"actions": ["session.create"]},
+        {"allow_descendants": False, "actions": ["session.create"]},
+    ):
+        manifest = _with_permissions(actions=["session.create"], child_sessions=child)
+        assert _schema_errors(manifest), f"{child} must be rejected by the schema"
+    ok = _with_permissions(
+        actions=["session.create", {"action": "session.exec", "scope": "created_sessions"}],
+        child_sessions={
+            "allow_descendants": True,
+            "actions": ["session.create", {"action": "session.exec", "scope": "created_sessions"}],
+        },
+    )
+    assert not _schema_errors(ok)
+    assert not rules.check_manifest(ok)
+
+
+def test_scopes_normalize_to_action_scope_pairs():
+    grants = rules.normalize(
+        ["session.exec", {"action": "artifact.read", "scope": "created_sessions"}]
+    )
+    assert grants == [
+        rules.Grant("session.exec", "own_session"),
+        rules.Grant("artifact.read", "created_sessions"),
+    ]
+    assert str(grants[1]) == "artifact.read@created_sessions"
+    # session.create prints without a scope: it never has one.
+    assert str(rules.Grant("session.create", "own_session")) == "session.create"
+
+
+# --------------------------------------------------------------------------- #
+# Backward compatibility: a manifest written before scopes existed.
+# --------------------------------------------------------------------------- #
+PRE_SCOPE_FACTORY = MANIFEST_SCHEMA.parent / "compat" / "pre-scope-factory.json"
+
+
+def test_frozen_pre_change_manifest_is_the_real_pre_change_artifact():
+    """compat/pre-scope-factory.json is a byte-for-byte copy of
+    apps/factory/manifest.json before this change. Pin its digest so it cannot
+    be quietly "fixed" into passing."""
+    digest = hashlib.sha256(PRE_SCOPE_FACTORY.read_bytes()).hexdigest()
+    assert digest == "c646a0d5830bb1886a9ac1e5c5f40ee0a994f0ef22b5c11d544ed8bb4d122940", (
+        "the frozen pre-change manifest was modified; it is evidence, not an example"
+    )
+
+
+def test_pre_change_manifest_still_validates():
+    manifest = load_json(PRE_SCOPE_FACTORY)
+    assert not _schema_errors(manifest), "an additive change must not invalidate an older manifest"
+    assert not rules.check_manifest(manifest)
+
+
+def test_pre_change_manifest_keeps_its_meaning_flat_list_means_own_session():
+    manifest = load_json(PRE_SCOPE_FACTORY)
+    actions = manifest["permissions"]["actions"]
+    assert all(isinstance(a, str) for a in actions), "fixture must be the flat pre-change list"
+    assert all(g.scope == "own_session" for g in rules.normalize(actions))
+
+
+def test_pre_change_counts_only_child_sessions_grants_no_child_authority():
+    child = load_json(PRE_SCOPE_FACTORY)["permissions"]["child_sessions"]
+    assert set(child) == {"max_concurrent", "max_total"}, "fixture must be counts-only"
+    assert "actions" not in child, "no delegated authority"
+    assert child.get("allow_descendants", False) is False, "descendants denied by default"
+    assert rules.normalize(child.get("actions")) == []
+
+
+@pytest.mark.parametrize("path", APP_MANIFESTS, ids=lambda p: p.parent.name)
+def test_every_first_party_app_manifest_is_schema_and_rule_clean(path: Path):
+    """Task 2.3: the apps and the contract cannot drift apart. Includes the app
+    manifests this change did NOT touch (claude, codex, pi, lift, story), which
+    still use the flat pre-scope action list."""
+    manifest = load_json(path)
+    assert not _schema_errors(manifest)
+    violations = rules.check_manifest(manifest)
+    assert not violations, [str(v) for v in violations]
+
+
+def test_untouched_app_manifests_still_use_the_flat_form():
+    """Proof the bare action id is still a first-class form, not a deprecated
+    one: these manifests were not edited by this change."""
+    for name in ("claude", "codex", "pi", "lift", "story"):
+        actions = load_json(REPO / "apps" / name / "manifest.json")["permissions"]["actions"]
+        assert actions and all(isinstance(a, str) for a in actions), name
+
+
+def test_factory_manifest_declares_child_authority_and_denies_descendants():
+    """Task 2.1: the two halves the ratified factory-app scenario assumes."""
+    permissions = load_json(REPO / "apps" / "factory" / "manifest.json")["permissions"]
+    child = permissions["child_sessions"]
+    assert child["allow_descendants"] is False
+    worker = rules.normalize(child["actions"])
+    coordinator = rules.normalize(permissions["actions"])
+    assert worker, "a worker must receive a declared set, not an empty one"
+    assert "session.create" not in {g.action for g in worker}
+    # Strictly narrower, not merely a subset of equal size.
+    assert {g.action for g in worker} < {g.action for g in coordinator}
+    assert all(g.scope == "own_session" for g in worker)
+
+
+def test_factory_manifest_takes_a_delegated_grant_not_a_tenant_key():
+    """Task 2.2: the coordinator receives a grant:// credential in the env var
+    the SDK reads, so it authenticates as itself rather than as the tenant."""
+    secrets = load_json(REPO / "apps" / "factory" / "manifest.json")["permissions"]["secrets"]
+    by_name = {s["name"]: s["ref"] for s in secrets}
+    assert by_name["BARISTA_HOST_API_TOKEN"].startswith("grant://")
+    assert by_name["NOTIFY_TOKEN"].startswith("secret://")
 
 
 # --------------------------------------------------------------------------- #

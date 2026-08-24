@@ -1,0 +1,45 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "nested-fanout",
+  "version": "0.1.0",
+  "description": "A coordinator whose workers may themselves fan out one more level. The only shape in which a descendant's session create is permitted: allow_descendants is stated explicitly, and every action delegated downwards is one the app exercises downwards itself.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-nested-fanout:0.1.0",
+    "digest": "sha256:9c8b7a6d5e4f30211f2e3d4c5b6a79880123456789abcdef0123456789abcdef",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/coordinator"],
+    "working_dir": "/work",
+    "readiness": { "type": "none" }
+  },
+  "capabilities": {
+    "required": [
+      { "capability": "grants.delegated" }
+    ]
+  },
+  "permissions": {
+    "actions": [
+      "session.create",
+      { "action": "session.get", "scope": "created_sessions" },
+      { "action": "session.delete", "scope": "created_sessions" },
+      { "action": "session.exec", "scope": "created_sessions" },
+      { "action": "artifact.read", "scope": "created_sessions" },
+      { "action": "artifact.write", "scope": "own_session" }
+    ],
+    "secrets": [
+      { "name": "BARISTA_HOST_API_TOKEN", "ref": "grant://nested-fanout/coordinator" }
+    ],
+    "artifacts": { "read": true, "write": true },
+    "child_sessions": {
+      "max_concurrent": 4,
+      "max_total": 16,
+      "allow_descendants": true,
+      "actions": [
+        "session.create",
+        { "action": "session.get", "scope": "created_sessions" },
+        { "action": "session.delete", "scope": "created_sessions" },
+        { "action": "session.exec", "scope": "created_sessions" },
+        { "action": "artifact.write", "scope": "own_session" }
+      ]
+    }
+  }
+}

@@ -46,7 +46,13 @@ def run_conformance(
         provider_version=config.provider_version,
         advertised_profiles=[],
         standalone=config.standalone,
-        environment={"endpoint": config.endpoint, "standalone": config.standalone},
+        environment={
+            "endpoint": config.endpoint,
+            "standalone": config.standalone,
+            # Recorded because it decides whether the delegated-authority cases
+            # could run at all: without it they skip, and a skip never certifies.
+            "delegated_probe": config.delegated_probe is not None,
+        },
     )
 
     with HostAPIClient(
