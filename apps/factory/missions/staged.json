@@ -1,0 +1,35 @@
+{
+  "name": "staged",
+  "app": "pi",
+  "concurrency": 3,
+  "strict_gates": true,
+  "budget": { "max_workers": 4 },
+  "tasks": [
+    {
+      "id": "spec",
+      "prompt": "Read /work/intent.md. Write /work/spec.md: what to build, the constraints, and the acceptance criteria. Do not write code.",
+      "files": {
+        "/work/intent.md": "# Intent\nCustomers cannot see the status of a claim without phoning us.\nThey should see status, next step and expected date in the portal.\nNo new PII in the portal session; existing authentication only.\n"
+      },
+      "produces": { "spec": "/work/spec.md" }
+    },
+    {
+      "id": "implement",
+      "depends_on": ["spec"],
+      "consumes": { "spec": "/work/spec.md" },
+      "prompt": "Implement what /work/spec.md describes, in /work/src. The test suite at /work/acceptance.test.js is the acceptance criteria: make it pass. Do not edit it.",
+      "files": {
+        "/work/acceptance.test.js": "const assert = require('node:assert');\nconst { status } = require('/work/src/status.js');\nassert.equal(typeof status, 'function');\nassert.ok(status('claim-1').expectedDate, 'a status carries an expected date');\n"
+      },
+      "check": ["node", "/work/acceptance.test.js"],
+      "produces": { "impl": "/work/src/status.js" }
+    },
+    {
+      "id": "document",
+      "depends_on": ["spec", "implement"],
+      "consumes": { "spec": "/work/spec.md", "impl": "/work/status.js" },
+      "prompt": "Write /work/README.md describing what was built, from /work/spec.md and /work/status.js.",
+      "produces": { "docs": "/work/README.md" }
+    }
+  ]
+}

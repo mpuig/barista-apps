@@ -5,7 +5,9 @@ idempotent restart, and mission budget/grant bounds. All offline.
 
 from __future__ import annotations
 
+import base64
 import json
+import re
 import socket
 import sys
 import threading
@@ -177,6 +179,355 @@ def test_budget_caps_worker_count(tmp_path):
     assert "max_workers" in str(ei.value)
 
 
+# -- apps-004: a provider double with a filesystem -------------------------- #
+class _FsProvider(MockProvider):
+    """MockProvider that remembers what was written to it.
+
+    `transfer.py` moves bytes with two command shapes and nothing else, so a
+    double only has to understand those two. The stock double echoes commands
+    (its node is a deterministic echo), which is fine for exercising exec but
+    cannot round-trip a file — and a staged-mission test that cannot round-trip a
+    file is testing the scheduler while pretending to test the transfer.
+
+    Subclassed here rather than changed in `conformance/`: that double is shared
+    with the conformance suite, where every behaviour is a claim about what a
+    provider must do. This is a test fixture, not a claim.
+    """
+
+    _WRITE = re.compile(r"printf %s ([A-Za-z0-9+/=]*) \| base64 -d > '([^']+)'")
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.files: dict[tuple[str, str], bytes] = {}
+
+    def _exec_stdout(self, session_id: str, command: list) -> bytes:
+        if len(command) == 3 and command[0] == "sh" and command[1] == "-c":
+            m = self._WRITE.search(command[2])
+            if m:
+                self.files[(session_id, m.group(2))] = base64.b64decode(m.group(1))
+                return b""
+        if len(command) == 2 and command[0] == "cat":
+            return self.files.get((session_id, command[1]), b"")
+        return super()._exec_stdout(session_id, command)
+
+
+def _fs_client(provider: _FsProvider) -> BaristaClient:
+    client = BaristaClient(Config(endpoint="http://cloud.invalid"), transport=provider.transport())
+    client._http.post(
+        "/v1alpha1/apps", content=json.dumps(WORKER_MANIFEST),
+        headers={"content-type": MANIFEST_MEDIA_TYPE},
+    )
+    return client
+
+
+def test_a_dependent_runs_after_its_dependency_and_receives_what_it_produced(tmp_path):
+    provider = _FsProvider()
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "chain", "app": WORKER_MANIFEST["name"], "concurrency": 3,
+            "tasks": [
+                {"id": "spec", "command": ["true"], "files": {"/work/seed": "the spec"},
+                 "produces": {"spec": "/work/seed"}},
+                {"id": "impl", "command": ["true"], "depends_on": ["spec"],
+                 "consumes": {"spec": "/work/spec.md"}},
+            ],
+        })
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+
+    assert state.summary()["ok"] == 2
+    # The consumer's session holds the producer's bytes. Keyed by path: session
+    # ids are opaque (`sess-<hex>`), and a test that assumes they encode the task
+    # name is asserting on the provider's id format rather than on the transfer.
+    landed = [c for (_sid, path), c in provider.files.items() if path == "/work/spec.md"]
+    assert landed == [b"the spec"], provider.files
+    # And the digest was recorded on the producer, not a copy of the content.
+    assert state.tasks["spec"].outputs["spec"].startswith("sha256:")
+
+
+def test_a_produced_output_survives_its_workers_reap(tmp_path):
+    """The producer is reaped on success before the consumer starts, so the
+    transfer cannot depend on both workers being alive."""
+    provider = _FsProvider()
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "chain", "app": WORKER_MANIFEST["name"], "concurrency": 1,
+            "tasks": [
+                {"id": "a", "command": ["true"], "files": {"/w/x": "carried"},
+                 "produces": {"out": "/w/x"}},
+                {"id": "b", "command": ["true"], "depends_on": ["a"],
+                 "consumes": {"out": "/w/in"}},
+            ],
+        })
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+        # The producer really is gone.
+        from barista_app_sdk.errors import TerminalError
+
+        with pytest.raises(TerminalError):
+            client.get_session("chain-a")
+    assert state.summary()["ok"] == 2
+    got = [c for (sid, p), c in provider.files.items() if p == "/w/in"]
+    assert got == [b"carried"]
+
+
+def test_a_failed_dependency_blocks_its_dependents_transitively(tmp_path):
+    """Blocking is transitive. Marking only direct dependents would leave a task
+    three hops downstream pending forever, and a mission that never finishes is a
+    worse report than one that says why it stopped."""
+    provider = _FsProvider()
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "chain", "app": WORKER_MANIFEST["name"],
+            "tasks": [
+                {"id": "a", "command": ["true"]},
+                {"id": "b", "command": ["true"], "depends_on": ["a"]},
+                {"id": "c", "command": ["true"], "depends_on": ["b"]},
+                {"id": "d", "command": ["true"]},
+            ],
+        })
+        coord = Coordinator(client, mission, tmp_path / "state.json")
+        # The double exits 0 for everything, so failure is injected on the state
+        # rather than faked in the provider — this exercises the scheduler's
+        # reachability rule, which is what the test is about.
+        coord.state.tasks["a"].state = "failed"
+        coord._mark_unreachable()
+
+    assert coord.state.tasks["b"].state == "blocked"
+    assert coord.state.tasks["b"].blocked_by == "a"
+    # Transitive: c depends on b, which is blocked rather than failed.
+    assert coord.state.tasks["c"].state == "blocked"
+    assert coord.state.tasks["c"].blocked_by == "b"
+    # And an independent task is untouched.
+    assert coord.state.tasks["d"].state == "pending"
+
+
+def test_an_independent_task_still_runs_when_another_branch_fails(tmp_path):
+    provider = _FsProvider()
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "chain", "app": WORKER_MANIFEST["name"],
+            "tasks": [
+                {"id": "a", "command": ["true"]},
+                {"id": "b", "command": ["true"], "depends_on": ["a"]},
+                {"id": "d", "command": ["true"]},
+            ],
+        })
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+    assert state.tasks["d"].state == "ok"
+    assert state.state == "done"
+
+
+def test_a_dependent_never_starts_before_its_dependency_has_finished(tmp_path, monkeypatch):
+    """The change's central property, asserted on order rather than on a result.
+
+    Written after mutation testing found that making every task ready regardless
+    of its dependencies broke no test: the outcome assertions elsewhere could
+    still pass by luck, because a dependency that happens to finish first leaves
+    the same result behind. The slow dependency is what removes the luck — with
+    ordering unenforced, the dependent starts while `slow` is still sleeping and
+    the interleaving is recorded.
+    """
+    order: list[tuple[str, str]] = []
+    real_run_task = Coordinator.run_task
+
+    def recording(self, task):
+        order.append((task.id, "start"))
+        try:
+            return real_run_task(self, task)
+        finally:
+            order.append((task.id, "end"))
+
+    monkeypatch.setattr(Coordinator, "run_task", recording)
+
+    provider = _FsProvider()
+    real_exec = _FsProvider._exec_stdout
+
+    def slow(self, session_id, command):
+        if command == ["slow"]:
+            time.sleep(0.15)
+        return real_exec(self, session_id, command)
+
+    monkeypatch.setattr(_FsProvider, "_exec_stdout", slow)
+
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "order", "app": WORKER_MANIFEST["name"], "concurrency": 4,
+            "tasks": [
+                {"id": "slow-dep", "command": ["slow"]},
+                {"id": "dependent", "command": ["true"], "depends_on": ["slow-dep"]},
+                {"id": "other", "command": ["true"]},
+            ],
+        })
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+
+    assert state.summary()["ok"] == 3
+    assert order.index(("slow-dep", "end")) < order.index(("dependent", "start")), order
+    # `other` depends on nothing, so it must NOT have waited for the slow task —
+    # otherwise this test would pass just as well against a serial scheduler.
+    assert order.index(("other", "start")) < order.index(("slow-dep", "end")), order
+
+
+def test_a_diamond_runs_its_join_once_and_only_after_both_branches(tmp_path):
+    provider = _FsProvider()
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "diamond", "app": WORKER_MANIFEST["name"], "concurrency": 4,
+            "tasks": [
+                {"id": "a", "command": ["true"], "files": {"/w/a": "A"}, "produces": {"a": "/w/a"}},
+                {"id": "b", "command": ["true"], "depends_on": ["a"], "files": {"/w/b": "B"},
+                 "produces": {"b": "/w/b"}},
+                {"id": "c", "command": ["true"], "depends_on": ["a"], "files": {"/w/c": "C"},
+                 "produces": {"c": "/w/c"}},
+                {"id": "d", "command": ["true"], "depends_on": ["b", "c"],
+                 "consumes": {"b": "/w/from-b", "c": "/w/from-c"}},
+            ],
+        })
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+
+    assert state.summary()["ok"] == 4
+    # Exactly one worker for the join, not one per incoming edge.
+    assert state.tasks["d"].attempts == 1
+    # And it received both branches, which it could not have unless both had
+    # already succeeded and been captured.
+    assert [c for (_s, path), c in provider.files.items() if path == "/w/from-b"] == [b"B"]
+    assert [c for (_s, path), c in provider.files.items() if path == "/w/from-c"] == [b"C"]
+
+
+def test_a_restart_mid_graph_resumes_without_rerunning_what_succeeded(tmp_path):
+    """Readiness is recomputed from recovered task states, so a second
+    coordinator over the same state finishes the graph rather than restarting it."""
+    provider = _FsProvider()
+    state_path = tmp_path / "state.json"
+    with _fs_client(provider) as client:
+        spec = {
+            "name": "resume", "app": WORKER_MANIFEST["name"], "concurrency": 2,
+            "tasks": [
+                {"id": "a", "command": ["true"], "files": {"/w/a": "A"}, "produces": {"a": "/w/a"}},
+                {"id": "b", "command": ["true"], "depends_on": ["a"], "consumes": {"a": "/w/in"}},
+            ],
+        }
+        first = Coordinator(client, Mission.load(spec), state_path)
+        # Only `a` runs: the graph is stopped before `b` becomes ready.
+        first.run_task(first.mission.tasks[0])
+        assert first.state.tasks["a"].state == "ok"
+        attempts_a = first.state.tasks["a"].attempts
+
+        # A fresh coordinator over the same state file.
+        state = Coordinator(client, Mission.load(spec), state_path).run()
+
+    assert state.summary()["ok"] == 2
+    assert state.tasks["a"].attempts == attempts_a, "a completed task was run again"
+    assert [c for (_s, path), c in provider.files.items() if path == "/w/in"] == [b"A"]
+
+
+def test_planted_content_is_in_place_before_the_command_runs(tmp_path):
+    provider = _FsProvider()
+    seen: dict[str, bytes | None] = {}
+    real = _FsProvider._exec_stdout
+
+    def observe(self, session_id, command):
+        if command == ["true"]:
+            # What the task's own command sees when it starts.
+            seen["at_command"] = self.files.get((session_id, "/work/given"))
+        return real(self, session_id, command)
+
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "plant", "app": WORKER_MANIFEST["name"],
+            "tasks": [{"id": "t", "command": ["true"], "files": {"/work/given": "provided"}}],
+        })
+        _FsProvider._exec_stdout = observe
+        try:
+            Coordinator(client, mission, tmp_path / "state.json").run()
+        finally:
+            _FsProvider._exec_stdout = real
+    assert seen.get("at_command") == b"provided"
+
+
+def test_blocked_is_neither_failed_nor_pending(tmp_path):
+    """A task that never ran has learned nothing about itself. Reporting it as
+    failed sends someone to debug work that never happened; reporting it as
+    pending says it is still coming."""
+    from barista_app_factory.state import MissionState
+
+    st = MissionState(mission="m", tasks={})
+    from barista_app_factory.state import TaskState
+
+    st.tasks = {"a": TaskState(id="a", state="failed"), "b": TaskState(id="b", state="blocked", blocked_by="a")}
+    summary = st.summary()
+    assert summary["failed"] == 1 and summary["blocked"] == 1
+    assert summary["pending"] == 0
+    assert st.tasks["b"].blocked_by == "a"
+
+
+def test_summary_omits_blocked_when_there_are_none():
+    """A mission without dependencies reports exactly what it always did."""
+    from barista_app_factory.state import MissionState, TaskState
+
+    st = MissionState(mission="m", tasks={"a": TaskState(id="a", state="ok")})
+    assert st.summary() == {"total": 1, "ok": 1, "failed": 0, "pending": 0}
+
+
+def test_independent_tasks_still_run_concurrently(tmp_path, monkeypatch):
+    """The ready-set loop must not have serialised a mission that has no edges."""
+    provider = _FsProvider()
+    seen: list[int] = []
+    lock = threading.Lock()
+    live = {"n": 0}
+
+    real = MockProvider._exec_stdout
+
+    def counting(self, session_id, command):
+        with lock:
+            live["n"] += 1
+            seen.append(live["n"])
+        time.sleep(0.02)
+        with lock:
+            live["n"] -= 1
+        return real(self, session_id, command)
+
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "wide", "app": WORKER_MANIFEST["name"], "concurrency": 3,
+            "tasks": [{"id": f"t{i}", "command": ["true"]} for i in range(6)],
+        })
+        monkeypatch.setattr(_FsProvider, "_exec_stdout", counting)
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+
+    assert state.summary()["ok"] == 6
+    assert max(seen) > 1, "no two tasks were ever in flight together"
+
+
+def test_the_planted_criterion_is_restored_before_the_check_runs(tmp_path, monkeypatch):
+    """The half of the gate guarantee that needs no opt-in: a worker that
+    overwrites the planted criterion is still judged against the mission's copy."""
+    provider = _FsProvider()
+    overwritten = {"done": False}
+    real = _FsProvider._exec_stdout
+
+    def clobber(self, session_id, command):
+        # The task's own command replaces the planted file with its own version.
+        if command == ["true"] and not overwritten["done"]:
+            self.files[(session_id, "/work/criterion")] = b"the worker's version"
+            overwritten["done"] = True
+        return real(self, session_id, command)
+
+    monkeypatch.setattr(_FsProvider, "_exec_stdout", clobber)
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "gate", "app": WORKER_MANIFEST["name"],
+            "tasks": [{
+                "id": "t", "command": ["true"],
+                "files": {"/work/criterion": "the mission's version"},
+                "check": ["node", "/work/criterion"],
+            }],
+        })
+        Coordinator(client, mission, tmp_path / "state.json").run()
+
+    assert overwritten["done"], "the test did not exercise the overwrite it exists for"
+    survivor = [c for (_s, p), c in provider.files.items() if p == "/work/criterion"]
+    assert survivor == [b"the mission's version"], survivor
+
+
 # -- apps-004: the graph, refused at load ----------------------------------- #
 def _graph_mission(**overrides):
     """A mission whose tasks are given explicitly, so a test can shape the graph."""
@@ -319,6 +670,20 @@ def test_the_gate_rule_is_opt_in_so_a_location_argument_is_not_mistaken_for_a_cr
             "id": "t", "prompt": "fix the typos and commit",
             "check": ["git", "-C", "/work", "diff", "--quiet"],
         }])
+
+
+def test_the_staged_example_mission_loads_under_strict_gates():
+    """The mission that demonstrates the chain is also the proof the pieces
+    compose: every stage consumes what the one before it produced, and every
+    check reads a planted criterion, under the strictest setting."""
+    mission = Mission.load_file(REPO / "apps" / "factory" / "missions" / "staged.json")
+    assert mission.strict_gates is True
+    by_id = mission.by_id()
+    assert by_id["implement"].depends_on == ["spec"]
+    assert by_id["implement"].consumes["spec"] == "/work/spec.md"
+    # The acceptance suite is planted, so the task it judges cannot have written it.
+    assert "/work/acceptance.test.js" in by_id["implement"].files
+    assert by_id["implement"].check == ["node", "/work/acceptance.test.js"]
 
 
 def test_the_shipped_example_mission_still_loads():

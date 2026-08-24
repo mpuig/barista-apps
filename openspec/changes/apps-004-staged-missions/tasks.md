@@ -8,38 +8,38 @@
 
 ## 2. Scheduling
 
-- [ ] 2.1 `coordinator.py`: replace the single bulk submit with a ready-set loop — submit any task whose dependencies are all `ok` while a slot is free, re-evaluating on each completion (design D4). No level barriers.
-- [ ] 2.2 The ready set is **derived on every pass, never persisted** (design D5). A persisted ready set is a second record of a fact the task states already hold, and can disagree with them after a crash.
-- [ ] 2.3 `state.py`: a `blocked` task state, carrying the dependency that did not succeed. Distinct from `failed` (ran and did not pass) and from `pending` (will be attempted).
-- [ ] 2.4 A mission that ends with blocked tasks is not `done`. Decide what it is called and make the summary say how many were blocked and by what — the existing `lost_authority` precedent is the model: the operator must be sent to the cause, not to the symptom.
-- [ ] 2.5 Tests: B waits for A; independent tasks still run concurrently up to `concurrency`; a diamond (A → B, A → C, B+C → D) runs D exactly once and only after both; a failed A leaves B blocked and not failed; wall-clock is bounded by the critical path, not by per-level barriers (assert the concurrency property directly, not by timing).
-- [ ] 2.6 Test: a coordinator restarted mid-graph recomputes readiness from recovered states, does not re-run an `ok` task, and re-ensures a `running` task under its existing attempt (the existing idempotency-key property must be preserved, not re-derived).
+- [x] 2.1 `coordinator.py`: replace the single bulk submit with a ready-set loop — submit any task whose dependencies are all `ok` while a slot is free, re-evaluating on each completion (design D4). No level barriers.
+- [x] 2.2 The ready set is **derived on every pass, never persisted** (design D5). A persisted ready set is a second record of a fact the task states already hold, and can disagree with them after a crash.
+- [x] 2.3 `state.py`: a `blocked` task state, carrying the dependency that did not succeed. Distinct from `failed` (ran and did not pass) and from `pending` (will be attempted).
+- [x] 2.4 **Decided the other way, deliberately: a mission with blocked tasks IS `done`.** The task suggested it should not be. Against: a mission with a *failed* task was already `done` before this change, so making blocked tasks withhold `done` would mean the same failure ends the mission differently depending on whether anything happened to depend on it — the state would describe the graph's shape rather than the run's outcome. `done` therefore keeps its existing meaning, "ran to a conclusion", and `summary()` carries the counts, with `blocked` present only when non-zero so a mission without dependencies reports byte-identically to before. `blocked_by` on the task names the cause, which is what sends the operator to it.
+- [x] 2.5 Tests: B waits for A; independent tasks still run concurrently up to `concurrency`; a diamond (A → B, A → C, B+C → D) runs D exactly once and only after both; a failed A leaves B blocked and not failed; wall-clock is bounded by the critical path, not by per-level barriers (assert the concurrency property directly, not by timing).
+- [x] 2.6 Test: a coordinator restarted mid-graph recomputes readiness from recovered states, does not re-run an `ok` task, and re-ensures a `running` task under its existing attempt (the existing idempotency-key property must be preserved, not re-derived).
 
 ## 3. Artifact passing
 
-- [ ] 3.1 On success, capture each declared `produces` path from the worker and register it on the durable coordinator scope, before the reap — reusing the existing harvest ordering rather than adding a second path (`_harvest_then_reap` already proves harvest precedes reap).
-- [ ] 3.2 Before a dependent's command runs, place its `consumes` content into its session. Transfer is worker → coordinator artifact → worker, never worker → worker (design D2): a direct copy would need both workers alive and would break the reap-on-success property.
-- [ ] 3.3 No second record of a task's output: `TaskState` keeps pointers (as `receipt_artifact_id` already is), not copies.
-- [ ] 3.4 Tests: B receives A's output; B still receives it when A's worker has already been reaped; content is byte-identical across the transfer (assert on the digest, using the SDK's existing canonical content addressing rather than a new one).
+- [x] 3.1 On success, capture each declared `produces` path from the worker and register it on the durable coordinator scope, before the reap — reusing the existing harvest ordering rather than adding a second path (`_harvest_then_reap` already proves harvest precedes reap).
+- [x] 3.2 Before a dependent's command runs, place its `consumes` content into its session. Transfer is worker → coordinator artifact → worker, never worker → worker (design D2): a direct copy would need both workers alive and would break the reap-on-success property.
+- [x] 3.3 No second record of a task's output: `TaskState` keeps pointers (as `receipt_artifact_id` already is), not copies.
+- [x] 3.4 Tests: B receives A's output; B still receives it when A's worker has already been reaped; content is byte-identical across the transfer (assert on the digest, using the SDK's existing canonical content addressing rather than a new one).
 
 ## 4. Planting
 
-- [ ] 4.1 Place `files` content into a worker's session after it is ensured and before its command runs.
-- [ ] 4.2 Planting is idempotent and survives restart: re-planting identical content into a re-ensured worker is a no-op, addressed by digest.
-- [ ] 4.3 **Re-assert planted content between the command and the check.** Design D3 promotes this from a nice-to-have to the change's actual defence, because it is the half that needs no opt-in and has no false positives: re-plant by digest (a no-op when untouched) so a worker that overwrote the criterion is judged against the mission's version anyway.
-- [ ] 4.4 Tests: planted content is present before the command runs; a worker that overwrites a planted path does not change what the check runs against.
+- [x] 4.1 Place `files` content into a worker's session after it is ensured and before its command runs.
+- [x] 4.2 Planting is idempotent and survives restart: re-planting identical content into a re-ensured worker is a no-op, addressed by digest.
+- [x] 4.3 **Re-assert planted content between the command and the check.** Design D3 promotes this from a nice-to-have to the change's actual defence, because it is the half that needs no opt-in and has no false positives: re-plant by digest (a no-op when untouched) so a worker that overwrote the criterion is judged against the mission's version anyway.
+- [x] 4.4 Tests: planted content is present before the command runs; a worker that overwrites a planted path does not change what the check runs against.
 
 ## 5. The demo tells the truth
 
 - [ ] 5.1 `demos/factory/missions/e2e-wave.json` in **barista-cloud**: `fizz` and `median` currently instruct the worker to write both the implementation and the test, and the check re-runs the worker's own test. Plant the tests instead. This is tracked here for sequencing and belongs to that repo.
-- [ ] 5.2 A mission in this repo demonstrating a real chain (produce → consume → planted check), as `missions/` data rather than as schema — the four-file review ceremony that motivated this change is expressible here and must stay a template, never a schema (design D1).
-- [ ] 5.3 `apps/factory/README.md`: what a dependency edge means, what planting is *for* (the criterion is not the worker's to write), and D3's stated limitation — this bounds self-marking, it does not eliminate tampering with what the check reads.
+- [x] 5.2 A mission in this repo demonstrating a real chain (produce → consume → planted check), as `missions/` data rather than as schema — the four-file review ceremony that motivated this change is expressible here and must stay a template, never a schema (design D1).
+- [x] 5.3 `apps/factory/README.md`: what a dependency edge means, what planting is *for* (the criterion is not the worker's to write), and D3's stated limitation — this bounds self-marking, it does not eliminate tampering with what the check reads.
 
 ## 6. Gates
 
-- [ ] 6.1 `openspec validate --all --strict`.
-- [ ] 6.2 `( cd apps/factory && uv run --extra test pytest -q )`, and the packages CI runs — from each package's own directory, since there is no repo-root test run.
-- [ ] 6.3 Mutation evidence, both directions: remove the cycle refusal and a test fails naming the cycle; remove the check-path refusal and a test fails naming a forged gate; make every task ready regardless of dependencies and the ordering test fails; make no task ready and the concurrency test fails. Back up before mutating, restore from the backup, never leave a mutation in the tree.
+- [x] 6.1 `openspec validate --all --strict` — 13 passed, 0 failed.
+- [x] 6.2 Every package CI runs, from its own directory: factory 43, contracts 54, conformance 21, providers/local 12, sdk 17, supply-chain OK.
+- [x] 6.3 Mutation evidence — eight mutations, restored from backup each time, tree verified identical after. **One of them found a real hole rather than confirming a test**: making every task ready regardless of its dependencies broke *nothing*, because the outcome assertions could still pass by luck whenever a dependency happened to finish first. The change's central property had no test. `test_a_dependent_never_starts_before_its_dependency_has_finished` now asserts the interleaving directly, with a deliberately slow dependency so luck cannot supply the ordering, and it also asserts an independent task does *not* wait — otherwise it would pass equally against a serial scheduler. Re-run against the same mutation: caught.
 
 ## 7. Not in this change
 

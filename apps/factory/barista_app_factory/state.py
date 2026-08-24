@@ -22,12 +22,29 @@ from typing import Optional
 @dataclass
 class TaskState:
     id: str
-    state: str = "pending"  # pending|running|ok|failed
+    state: str = "pending"  # pending|running|ok|failed|blocked
     worker: Optional[str] = None
     attempts: int = 0
     exit_code: Optional[int] = None
     receipt_artifact_id: Optional[str] = None
     receipt: Optional[dict] = None
+    blocked_by: Optional[str] = None
+    """The dependency that did not succeed, when this task is `blocked`.
+
+    Blocked is not failed. A task whose dependency failed has learned nothing
+    about itself and never ran, so reporting it as a failure sends someone to
+    debug work that never happened — the same reasoning `_blame_the_operator`
+    already applies when it returns an unattempted task to `pending`. It is not
+    `pending` either: pending will be attempted, blocked will not.
+    """
+    outputs: dict[str, str] = field(default_factory=dict)
+    """Digests of what this task produced, by output name.
+
+    Digests, not content: the bytes live in the coordinator session, and a copy
+    here would be a second record of the same thing that can disagree with it.
+    Recorded so a consumer's transfer can be verified against what the producer
+    actually emitted.
+    """
 
 
 @dataclass
@@ -112,9 +129,15 @@ class MissionState:
     # -- summary ---------------------------------------------------------- #
     def summary(self) -> dict:
         states = [t.state for t in self.tasks.values()]
-        return {
+        out = {
             "total": len(states),
             "ok": states.count("ok"),
             "failed": states.count("failed"),
             "pending": states.count("pending") + states.count("running"),
         }
+        # Only when there are any, so the summary of a mission without
+        # dependencies is byte-identical to what it was before they existed.
+        blocked = states.count("blocked")
+        if blocked:
+            out["blocked"] = blocked
+        return out
