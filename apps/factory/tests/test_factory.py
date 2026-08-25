@@ -672,6 +672,48 @@ def test_the_gate_rule_is_opt_in_so_a_location_argument_is_not_mistaken_for_a_cr
         }])
 
 
+def test_a_mission_can_arrive_in_the_environment(monkeypatch):
+    """How a coordinator actually receives work in production.
+
+    A session's declared environment reaches the workload process, and an `exec`
+    into that session does not inherit it — verified against production, where
+    the grant is present in the entrypoint process's environ and absent from an
+    exec'd shell. So the coordinator must run *as* the entrypoint to hold its
+    credential, and an entrypoint cannot be handed a file nothing has written.
+    The environment carries both, set together at session create.
+    """
+    from barista_app_factory.__main__ import MISSION_ENV, _load_mission
+
+    monkeypatch.setenv(MISSION_ENV, json.dumps({
+        "name": "from-env", "app": WORKER_MANIFEST["name"],
+        "tasks": [{"id": "a", "command": ["true"]}],
+    }))
+    assert _load_mission(None).name == "from-env"
+
+
+def test_a_named_mission_path_is_never_replaced_by_the_environment(monkeypatch):
+    """A path that is given and missing is an error, not a silent fallback to
+    whatever the environment holds — otherwise a stale environment runs instead
+    of the mission the operator named."""
+    from barista_app_factory.__main__ import MISSION_ENV, _load_mission
+
+    monkeypatch.setenv(MISSION_ENV, json.dumps({
+        "name": "stale", "app": WORKER_MANIFEST["name"],
+        "tasks": [{"id": "a", "command": ["true"]}],
+    }))
+    with pytest.raises(FileNotFoundError):
+        _load_mission("/definitely/not/here.json")
+
+
+def test_no_mission_anywhere_is_refused_with_a_usable_message(monkeypatch):
+    from barista_app_factory.__main__ import MISSION_ENV, _load_mission
+
+    monkeypatch.delenv(MISSION_ENV, raising=False)
+    with pytest.raises(SystemExit) as ei:
+        _load_mission(None)
+    assert MISSION_ENV in str(ei.value)
+
+
 def test_the_mission_schema_travels_with_the_package():
     """The schema must sit *inside* the package, or the wheel does not carry it.
 
