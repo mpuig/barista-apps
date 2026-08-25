@@ -5,7 +5,12 @@
   "description": "Payload of a Server-Sent Event on a session event stream. The SSE `id` field carries the cursor; reconnect with Last-Event-ID to resume without gaps or duplicates.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["cursor", "type", "session_id", "time"],
+  "required": [
+    "cursor",
+    "type",
+    "session_id",
+    "time"
+  ],
   "properties": {
     "cursor": {
       "description": "Stable, monotonic, opaque cursor. Equals the SSE id field.",
@@ -13,6 +18,7 @@
     },
     "type": {
       "type": "string",
+      "description": "The closed vocabulary a client may switch on. A provider's node-observed lifecycle events are translated into these names; a provider-internal event type is never published here, so a client that switches on this field never sees a name that belongs to one implementation.",
       "enum": [
         "session.state_changed",
         "operation.updated",
@@ -20,12 +26,29 @@
         "exec.stderr",
         "exec.exit",
         "artifact.registered",
-        "lineage.changed"
+        "lineage.changed",
+        "session.deleted",
+        "session.woke",
+        "session.idle_stopped",
+        "session.ttl_warning",
+        "session.degraded",
+        "session.restored",
+        "session.fenced",
+        "session.ready_changed",
+        "session.lineage_recorded",
+        "session.child_created"
       ]
     },
-    "session_id": { "type": "string" },
-    "operation_id": { "type": "string" },
-    "time": { "type": "string", "format": "date-time" },
+    "session_id": {
+      "type": "string"
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
     "data": {
       "description": "Type-specific payload. Byte streams (exec.stdout/stderr) carry base64 in `data.chunk`.",
       "type": "object",
