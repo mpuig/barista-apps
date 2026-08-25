@@ -714,6 +714,31 @@ def test_no_mission_anywhere_is_refused_with_a_usable_message(monkeypatch):
     assert MISSION_ENV in str(ei.value)
 
 
+def test_the_manifest_declares_the_authority_the_coordinator_actually_uses():
+    """The manifest and the code must agree about scope, and they did not.
+
+    Factory registers every receipt on the `<mission>-coordinator` session it
+    *creates* (`_harvest_then_reap` -> `register_artifact(coord, ...)`), while the
+    manifest declared `artifact.write` for the app's own session only. Refused
+    403 in production the first time a provider actually enforced scopes — it
+    could never have worked, and nothing had checked because nothing enforced.
+
+    Asserted as a pair: every scope the coordinator writes at must be declared.
+    A test that only listed the manifest's contents would pass just as happily
+    after the next divergence.
+    """
+    manifest = json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())
+    declared = {
+        (a["action"], a["scope"]) if isinstance(a, dict) else (a, "own_session")
+        for a in manifest["permissions"]["actions"]
+    }
+    # The coordinator session is created by the coordinator, so writing a receipt
+    # there is a write at `created_sessions` scope.
+    assert ("artifact.write", "created_sessions") in declared
+    # And it still writes to its own session, so both scopes are required.
+    assert ("artifact.write", "own_session") in declared
+
+
 def test_the_mission_schema_travels_with_the_package():
     """The schema must sit *inside* the package, or the wheel does not carry it.
 
