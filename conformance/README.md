@@ -28,6 +28,31 @@ The process exits non-zero when the provider is **not** conformant, so CI can
 gate on it. The JSON report records contract version, suite version, provider
 identity, advertised profiles, per-case status, and violations.
 
+### The probe workload
+
+Cases that need a session which actually *runs* — exec, event cursors,
+pause/resume — install a small probe app. It defaults to a public multi-arch
+image pinned by its index digest, so the suite works out of the box against any
+provider with registry egress:
+
+| variable | default |
+| --- | --- |
+| `BARISTA_CONFORMANCE_PROBE_IMAGE` | `docker.io/library/alpine:3.20` |
+| `BARISTA_CONFORMANCE_PROBE_DIGEST` | the index digest of that tag |
+| `BARISTA_CONFORMANCE_PROBE_ARCHITECTURES` | `aarch64,x86_64` |
+| `BARISTA_CONFORMANCE_PROBE_ENTRYPOINT` | `/bin/sh -c "sleep infinity"` |
+
+Point these at something your provider can pull if it draws from a private
+mirror, a loopback registry, or an air-gapped fleet. The entrypoint only has to
+stay alive — these cases exec into the session and pause it, so a workload that
+exits immediately is not a session.
+
+This deliberately is **not** `contracts/app-manifest/v1alpha1/examples/
+minimal.json`. That file documents the manifest shape and its digest is a
+readable placeholder, so a provider that genuinely resolves images can never
+boot it while one that fakes the workload passes — which made the core cases
+easier to pass the less real the provider was.
+
 ## The rules it enforces
 
 - **Core profile must fully pass** — discovery, manifest rejection,

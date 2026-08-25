@@ -49,17 +49,6 @@ def all_cases() -> list[Case]:
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _minimal_manifest() -> dict:
-    path = (
-        schemas._contracts_dir()
-        / "app-manifest"
-        / "v1alpha1"
-        / "examples"
-        / "minimal.json"
-    )
-    return json.loads(path.read_text())
-
-
 def _no_digest_manifest() -> dict:
     path = (
         schemas._contracts_dir()
@@ -96,17 +85,46 @@ def _over_delegating_manifest() -> dict:
     return json.loads(path.read_text())
 
 
-def _ensure_a_session(client: HostAPIClient) -> str:
-    # A session is an instance of an installed app. Install the minimal app
-    # first (idempotent by name+version), then ensure a session of it. This
-    # matches how a real provider resolves a workload from an installed manifest.
-    manifest = _minimal_manifest()
+def _ensure_a_session(client: HostAPIClient, config) -> str:
+    # A session is an instance of an installed app. Install the probe app first
+    # (idempotent by name+version), then ensure a session of it. This matches how
+    # a real provider resolves a workload from an installed manifest — which is
+    # why the workload is the configurable probe rather than the contract's
+    # documentation example, whose placeholder digest no real provider can
+    # resolve. See ProbeWorkload.
+    manifest = config.probe_workload.manifest()
     client.install_app(manifest, key=new_idempotency_key())
     resp = client.ensure_session({"app": manifest["name"], "name": "conf-" + new_idempotency_key()})
     assert resp.status_code in (200, 201), f"ensure returned {resp.status_code}: {resp.text}"
     body = resp.json()
     schemas.assert_valid(schemas.component_validator("Session"), body, "Session")
     return body["id"]
+
+
+def _wait_until_running(client: HostAPIClient, sid: str, timeout: float = 120.0) -> str:
+    """Block until the session is actually running, and return its state.
+
+    Creating a session is asynchronous: ensure answers with the session in a
+    transitional state and the workload arrives later. A case that acts the
+    instant ensure returns is therefore testing how fast the provider happens to
+    be, not whether it honours the contract — and it fails against a provider
+    that really boots a machine while passing against one that fakes it.
+
+    Returns the last observed state either way; a case that needs a running
+    session asserts on it, so a provider stuck in a transitional state fails
+    loudly here rather than as a confusing refusal further down.
+    """
+    deadline = time.time() + timeout
+    state = None
+    while time.time() < deadline:
+        resp = client.get_session(sid)
+        if resp.status_code != 200:
+            return f"unreadable ({resp.status_code})"
+        state = resp.json().get("state")
+        if state in ("ready", "running", "failed", "terminated"):
+            return state
+        time.sleep(1.0)
+    return state or "unknown"
 
 
 def ok(case_id: str, profile: str, msg: str = "") -> CaseResult:
@@ -148,7 +166,7 @@ def manifest_rejection(client, config, advertised):
 
 @case("core.ensure_and_get")
 def ensure_and_get(client, config, advertised):
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     got = client.get_session(sid)
     assert got.status_code == 200, f"get_session returned {got.status_code}"
     # The closed Session schema (additionalProperties: false) is the real leak
@@ -163,7 +181,7 @@ def ensure_and_get(client, config, advertised):
 
 @case("core.ensure_idempotent")
 def ensure_idempotent(client, config, advertised):
-    manifest = _minimal_manifest()
+    manifest = config.probe_workload.manifest()
     client.install_app(manifest, key=new_idempotency_key())
     key = new_idempotency_key()
     body = {"app": manifest["name"], "name": "idem-" + key}
@@ -178,7 +196,7 @@ def ensure_idempotent(client, config, advertised):
 
 @case("core.exec")
 def exec_case(client, config, advertised):
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     try:
         resp = client.exec(sid, {"command": ["echo", "hello"]}, key=new_idempotency_key())
         assert resp.status_code == 200, f"exec returned {resp.status_code}"
@@ -212,7 +230,7 @@ def exec_case(client, config, advertised):
 def attach_contract(client, config, advertised):
     """Attach is part of the core profile: it must upgrade (101) or return a
     classified error (e.g. 426), never a plain unstructured 404/500."""
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     try:
         resp = client.attach(sid, mode="raw")
         if resp.status_code == 101:
@@ -229,7 +247,7 @@ def attach_contract(client, config, advertised):
 
 @case("core.events_cursor")
 def events_cursor(client, config, advertised):
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     try:
         client.exec(sid, {"command": ["echo", "hi"]}, key=new_idempotency_key())
         events = list(client.events(sid, max_events=5))
@@ -250,7 +268,7 @@ def events_cursor(client, config, advertised):
 
 @case("core.artifacts")
 def artifacts(client, config, advertised):
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     try:
         digest = "sha256:" + "ab" * 32
         reg = client.register_artifact(
@@ -287,7 +305,7 @@ def capability_error_not_faked(client, config, advertised):
             CORE,
             "pause_resume is advertised and supported; covered by its own profile case",
         )
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     try:
         resp = client.pause(sid, key=new_idempotency_key())
         assert resp.status_code == 501, f"unsupported pause should be 501, got {resp.status_code}"
@@ -304,7 +322,7 @@ def capability_error_not_faked(client, config, advertised):
 
 @case("core.cleanup")
 def cleanup(client, config, advertised):
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     resp = client.delete_session(sid, key=new_idempotency_key())
     assert resp.status_code == 202, f"delete returned {resp.status_code}"
     schemas.assert_valid(schemas.component_validator("Operation"), resp.json(), "Operation")
@@ -322,10 +340,15 @@ def cleanup(client, config, advertised):
 # --------------------------------------------------------------------------- #
 @case("pause_resume.roundtrip", profile="session.pause_resume")
 def pause_resume_roundtrip(client, config, advertised):
-    sid = _ensure_a_session(client)
+    sid = _ensure_a_session(client, config)
     try:
+        # Pause/resume is a statement about a *running* session. Issuing it while
+        # the workload is still arriving tests the provider's boot latency, not
+        # the profile.
+        state = _wait_until_running(client, sid)
+        assert state in ("ready", "running"), f"session never started (state={state})"
         p = client.pause(sid, key=new_idempotency_key())
-        assert p.status_code == 202, f"pause returned {p.status_code}"
+        assert p.status_code == 202, f"pause returned {p.status_code}: {p.text}"
         schemas.assert_valid(schemas.component_validator("Operation"), p.json(), "Operation")
         r = client.resume(sid, key=new_idempotency_key())
         assert r.status_code == 202, f"resume returned {r.status_code}"
