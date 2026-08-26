@@ -72,6 +72,33 @@ def _child_authority_manifest() -> dict:
     return json.loads(path.read_text())
 
 
+def _runnable_child_authority_manifest(config) -> dict:
+    """The contract's child-authority example, with a workload that can boot.
+
+    These cases have to *run* a coordinator, and the example's digest is a
+    documentation placeholder that no provider can resolve — the same reason the
+    core cases could not use `minimal.json`. Everything they actually assert
+    (the declared actions, the child_sessions block, the grant channel) is still
+    the contract's own text, verbatim: only `workload` is replaced, and no case
+    makes a claim about it.
+
+    This is narrower than substituting a manifest of our own, which the suite
+    refuses to do — the app's *identity and permissions* remain the published
+    example, so the provider is still being measured against the contract rather
+    than against something the suite invented.
+    """
+    manifest = _child_authority_manifest()
+    probe = config.probe_workload.manifest()["workload"]
+    manifest["workload"] = {
+        **manifest["workload"],
+        **{k: probe[k] for k in ("image", "digest", "architectures", "entrypoint")},
+    }
+    # The example's readiness is a log line its real image prints; the probe
+    # image does not, and waiting for it would time out every case below.
+    manifest["workload"]["readiness"] = {"type": "none"}
+    return manifest
+
+
 def _over_delegating_manifest() -> dict:
     """Schema-valid, semantically refused: it hands its children an action it
     does not hold. JSON Schema accepts it; a provider must not."""
@@ -497,7 +524,7 @@ def _confirm_delegated(client: HostAPIClient, secret: str) -> tuple[Optional[str
 
 def _acquire_delegated(client: HostAPIClient, config: ProviderConfig) -> AcquiredDelegation:
     """Stand up a coordinator and a worker, and hold both their credentials."""
-    manifest = _child_authority_manifest()
+    manifest = _runnable_child_authority_manifest(config)
     app = manifest["name"]
     created: list[str] = []
     env_name = _grant_env_name(config)
