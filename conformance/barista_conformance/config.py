@@ -8,8 +8,68 @@ against Barista Cloud — the cases themselves never branch on provider name.
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+@dataclass
+class ProbeWorkload:
+    """The workload the suite installs when a case needs a session that *runs*.
+
+    This is deliberately not the contract's ``examples/minimal.json``. That file
+    documents the manifest shape, and its digest is a readable placeholder — so a
+    provider that genuinely resolves images (any VMM-backed one) can never boot
+    it, while a provider that fakes the workload passes. Reusing a documentation
+    fixture as a runnable workload therefore made the core cases *easier* to pass
+    the less real the provider was, which inverts what conformance is for.
+
+    The default is a small public multi-arch image pinned by its index digest, so
+    the suite works out of the box against a provider with registry egress. A
+    provider that pulls from somewhere else — an air-gapped fleet, a private
+    mirror, a loopback registry — supplies its own; nothing here assumes any
+    particular registry is reachable.
+
+    The entrypoint only has to stay alive: these cases exec into the session and
+    pause/resume it, so a workload that exits immediately is not a session.
+    """
+
+    image: str = "docker.io/library/alpine:3.20"
+    digest: str = "sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+    architectures: tuple[str, ...] = ("aarch64", "x86_64")
+    entrypoint: tuple[str, ...] = ("/bin/sh", "-c", "sleep infinity")
+
+    @classmethod
+    def from_env(cls) -> "ProbeWorkload":
+        d = cls()
+        arches = os.environ.get("BARISTA_CONFORMANCE_PROBE_ARCHITECTURES")
+        entry = os.environ.get("BARISTA_CONFORMANCE_PROBE_ENTRYPOINT")
+        return cls(
+            image=os.environ.get("BARISTA_CONFORMANCE_PROBE_IMAGE") or d.image,
+            digest=os.environ.get("BARISTA_CONFORMANCE_PROBE_DIGEST") or d.digest,
+            architectures=tuple(a.strip() for a in arches.split(",") if a.strip())
+            if arches
+            else d.architectures,
+            # shlex, not split(): an entrypoint argument can contain spaces, and
+            # the default ("sleep infinity" as one -c argument) is itself an
+            # example of that.
+            entrypoint=tuple(shlex.split(entry)) if entry else d.entrypoint,
+        )
+
+    def manifest(self, name: str = "conformance-probe") -> dict:
+        return {
+            "schema_version": "v1alpha1",
+            "name": name,
+            "version": "0.1.0",
+            "workload": {
+                "image": self.image,
+                "digest": self.digest,
+                "architectures": list(self.architectures),
+                "entrypoint": list(self.entrypoint),
+                "working_dir": "/work",
+                "readiness": {"type": "none"},
+            },
+        }
 
 
 @dataclass
@@ -144,6 +204,10 @@ class ProviderConfig:
     delegated_probe: Optional[DelegatedProbe] = None
     """Operator-supplied delegated credentials; see DelegatedProbe."""
 
+    probe_workload: ProbeWorkload = field(default_factory=ProbeWorkload)
+    """The workload installed by cases that need a running session; see
+    ProbeWorkload for why this is not the contract's documentation example."""
+
     grant_env_var: Optional[str] = None
     """Env var a delegated grant is resolved into inside a session. Left None,
     the suite reads the name from the manifest it installs — which is where a
@@ -194,6 +258,7 @@ class ProviderConfig:
             provider_version=os.environ.get("BARISTA_PROVIDER_VERSION", "unknown"),
             standalone=os.environ.get("BARISTA_CONFORMANCE_STANDALONE", "") == "1",
             delegated_probe=DelegatedProbe.from_env(),
+            probe_workload=ProbeWorkload.from_env(),
             grant_env_var=os.environ.get("BARISTA_CONFORMANCE_GRANT_ENV") or None,
             unbound_grant=os.environ.get("BARISTA_CONFORMANCE_UNBOUND_GRANT") or None,
             expiry_wait_seconds=float(

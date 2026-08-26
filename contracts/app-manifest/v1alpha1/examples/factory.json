@@ -24,10 +24,8 @@
     }
   ],
   "capabilities": {
-    "required": [
-      { "capability": "session.fork" }
-    ],
     "optional": [
+      { "capability": "session.fork" },
       { "capability": "grants.delegated" },
       { "capability": "capsule.export" }
     ]
