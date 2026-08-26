@@ -721,6 +721,13 @@ def _disposable_grant(
         session_id = resp.json()["id"]
         if config.acquired is not None:
             config.acquired.sessions.append(session_id)  # deleted when the run ends
+        # Wait for it before reading anything out of it. Exec into a session that
+        # is still materialising blocks until the provider gives up, which
+        # surfaced as an opaque ReadTimeout on every case that wanted a
+        # disposable grant — hiding whatever the real answer would have been.
+        state = _wait_until_running(coordinator, session_id)
+        if state not in ("ready", "running"):
+            return None, f"the coordinator's child session never started (state={state})"
         secret = _read_session_env(coordinator, session_id, env_name)
     if not secret:
         return None, f"the provider resolved nothing into {env_name} in that child session"
