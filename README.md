@@ -9,10 +9,22 @@ implementation's private API.
 
 ## Status
 
-This repository holds an [OpenSpec](https://github.com/Fission-AI/OpenSpec)
-proposal (`apps-001-portable-agent-apps`) and no implementation yet. See
-[`openspec/changes/apps-001-portable-agent-apps/`](openspec/changes/apps-001-portable-agent-apps/)
-for the proposal, design, and task breakdown before writing code here.
+Implemented and in use. The contracts, the conformance suite, the local
+provider, the Python SDK and the reference apps below all exist and are tested;
+`openspec/` holds the proposals and ratified specs behind them, and remains the
+place to start for *why* something is shaped the way it is.
+
+Conformance, as last measured against a managed provider (Barista Cloud beta,
+suite `0.1.0a1`, 2026-08-27):
+
+```
+cases: passed=23 failed=0 skipped=0 -> conformant=True
+```
+
+certifying `core`, `session.pause_resume` and `grants.delegated`. The other
+optional profiles are **registered but not yet certifiable** — the suite has no
+deep cases for them, and by its own rule an absent case cannot certify an
+advertised profile. See [`conformance/README.md`](conformance/README.md).
 
 ## What this is
 
