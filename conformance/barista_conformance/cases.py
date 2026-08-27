@@ -522,11 +522,20 @@ def _confirm_delegated(client: HostAPIClient, secret: str) -> tuple[Optional[str
     return replacement, ""
 
 
-def _acquire_delegated(client: HostAPIClient, config: ProviderConfig) -> AcquiredDelegation:
-    """Stand up a coordinator and a worker, and hold both their credentials."""
+def _acquire_delegated(
+    client: HostAPIClient,
+    config: ProviderConfig,
+    sessions: Optional[list[str]] = None,
+) -> AcquiredDelegation:
+    """Stand up a coordinator and a worker, and hold both their credentials.
+
+    ``sessions`` is owned by the caller and reachable before this function's
+    first side effect. If a request raises, runner cleanup can therefore still
+    delete everything appended before the exception.
+    """
     manifest = _runnable_child_authority_manifest(config)
     app = manifest["name"]
-    created: list[str] = []
+    created = sessions if sessions is not None else []
     env_name = _grant_env_name(config)
     if not env_name:
         return AcquiredDelegation(
@@ -680,11 +689,16 @@ def delegated_credentials(
         _keep_alive(client, config.delegated_probe)
         return config.delegated_probe, config.acquired.reason
     if config.acquired is None:
-        config.acquired = _acquire_delegated(client, config)
+        # Publish the cleanup ledger before acquisition creates anything. An
+        # exception otherwise loses `_acquire_delegated`'s local return value and
+        # every successfully-created probe before it.
+        pending = AcquiredDelegation(
+            None, "delegated credential acquisition did not complete"
+        )
+        config.acquired = pending
+        config.acquired = _acquire_delegated(client, config, pending.sessions)
     elif config.acquired.probe is not None and not _keep_alive(client, config.acquired.probe):
-        sessions = config.acquired.sessions
-        config.acquired = _acquire_delegated(client, config)
-        config.acquired.sessions[:0] = sessions
+        config.acquired = _acquire_delegated(client, config, config.acquired.sessions)
     return config.acquired.probe, config.acquired.reason
 
 
