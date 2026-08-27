@@ -26,6 +26,12 @@ The same mission runs unchanged against Barista Cloud by changing only the
 endpoint/token — Factory branches on discovered capabilities, never on provider
 name.
 
+A coordinator running **as a session** receives the same JSON atomically at
+creation through `$BARISTA_FACTORY_MISSION`; no file has to exist before the
+workload starts. The positional path remains for an operator invoking the
+binary directly. An explicitly named path that is unreadable is an error and
+never falls back to the environment.
+
 ## How it behaves
 
 - **One durable coordinator owns mission state** — task graph, worker handles,
@@ -36,8 +42,9 @@ name.
   result receipt (and declared artifacts) on the durable coordinator session
   **before** deleting the worker. A retrievable receipt proves harvest completed
   before the reap.
-- **Failed workers survive** — they are left in place for bounded forensics
-  instead of being deleted.
+- **Failed workers survive** — Factory honors `max_attempts`, registers the
+  final failed receipt, and leaves the worker in place for bounded forensics
+  instead of deleting it.
 - **Tasks may depend on tasks** — `depends_on` names the tasks that must succeed
   first. Scheduling is a ready set, not levels: a slot is refilled the moment any
   task completes, so wall-clock follows the critical path rather than the sum of
@@ -172,4 +179,20 @@ mission budget/grant bounds.
 It also runs a mission that spans **more than two grant lifetimes** — with the
 provider's lifetime shortened and the clock injected, so nothing sleeps for a
 grant — and a mission whose credential lapses, asserting it is reported as lost
-authority with every task still pending rather than as work that failed.
+authority with every task still pending rather than as work that failed. The
+failure-path coverage pins retries, blocked dependents, durable failed receipts,
+failed-worker forensics, and successful-worker reap ordering.
+
+Managed-provider acceptance is separate and opt-in:
+
+```bash
+cd acceptance
+BARISTA_HOST_API_ENDPOINT=... BARISTA_HOST_API_TOKEN=... \
+BARISTA_FACTORY_COORDINATOR_IMAGE=... BARISTA_FACTORY_COORDINATOR_DIGEST=... \
+BARISTA_FACTORY_WORKER_IMAGE=... BARISTA_FACTORY_WORKER_DIGEST=... \
+uv run pytest tests/test_managed_acceptance.py -q
+```
+
+The real grant-lifetime case is marked `slow` and excluded from that default
+run. Its exact invocation is documented at the top of
+`acceptance/tests/test_managed_acceptance.py`.

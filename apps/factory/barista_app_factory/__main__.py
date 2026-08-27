@@ -64,6 +64,22 @@ def _load_mission(path: str | None) -> Mission:
         raise SystemExit(f"${MISSION_ENV} is not valid JSON: {e}") from e
 
 
+def _load_config(endpoint: str | None, token_env: str | None) -> Config:
+    """Turn missing startup configuration into an app-level report.
+
+    `Config.from_env()` raises ValueError. Left uncaught, that becomes a
+    traceback followed by a provider-level unreachable-guest symptom after the
+    workload exits. SystemExit keeps the non-zero exit while making the last
+    line name the configuration the operator must supply.
+    """
+    if endpoint:
+        return Config(endpoint=endpoint.rstrip("/"), token_env=token_env)
+    try:
+        return Config.from_env()
+    except ValueError as exc:
+        raise SystemExit(f"factory configuration error: {exc}") from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="barista-factory")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -79,11 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     mission = _load_mission(args.mission)
-    config = (
-        Config(endpoint=args.endpoint.rstrip("/"), token_env=args.token_env)
-        if args.endpoint
-        else Config.from_env()
-    )
+    config = _load_config(args.endpoint, args.token_env)
 
     print("coordinator ready", flush=True)  # readiness log line (see manifest)
     with BaristaClient(config) as client:

@@ -92,6 +92,7 @@ class CredentialKeeper:
         now: Callable[[], float] = time.time,
         margin_seconds: Optional[float] = None,
         check_interval_seconds: Optional[float] = None,
+        on_status_change: Optional[Callable[[dict], None]] = None,
     ):
         self.client = client
         self._now = now
@@ -100,6 +101,7 @@ class CredentialKeeper:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._on_status_change = on_status_change
 
         self.active = False
         self.inactive_reason: Optional[str] = None
@@ -145,6 +147,20 @@ class CredentialKeeper:
         return remaining is not None and remaining <= 0
 
     # -- lifecycle -------------------------------------------------------- #
+    def set_status_callback(self, callback: Callable[[dict], None]) -> None:
+        """Publish rotation state while a mission is still in flight.
+
+        A managed coordinator may disappear as soon as its workload exits, so
+        recording status only after the mission finishes makes a real renewal
+        impossible to observe. The callback persists each state change in the
+        coordinator's own durable state.
+        """
+        self._on_status_change = callback
+
+    def _status_changed(self) -> None:
+        if self._on_status_change is not None:
+            self._on_status_change(self.status())
+
     def establish(self) -> bool:
         """Learn when the credential expires, by refreshing it once.
 
@@ -168,9 +184,11 @@ class CredentialKeeper:
                         "credential cannot be refreshed and the mission is bounded by its "
                         "lifetime"
                     )
+                    self._status_changed()
                     return False
             except HostAPIError as exc:
                 self.inactive_reason = f"could not read discovery: {exc}"
+                self._status_changed()
                 return False
             try:
                 grant = self.client.refresh_grant()
@@ -179,9 +197,11 @@ class CredentialKeeper:
                     "the credential is not a refreshable delegated grant "
                     f"({exc.error_class or 'error'}/{exc.code or exc.status}): {exc}"
                 )
+                self._status_changed()
                 return False
             self._adopt(grant)
             self.active = True
+            self._status_changed()
             return True
 
     def _adopt(self, grant: Grant) -> None:
@@ -194,6 +214,7 @@ class CredentialKeeper:
             if observed > 0 and (self.lifetime_seconds is None or observed > self.lifetime_seconds):
                 self.lifetime_seconds = observed
         self.refreshes += 1
+        self._status_changed()
 
     def ensure_fresh(self) -> bool:
         """Refresh if the margin has been reached. True if it refreshed.
@@ -207,6 +228,7 @@ class CredentialKeeper:
                 return False
             if self.lapsed():
                 self.active = False
+                self._status_changed()
                 raise LostAuthority(
                     "the coordinator's delegated grant expired before it was refreshed "
                     f"(margin {self.margin_seconds:.0f}s of a {self.lifetime_seconds:.0f}s "
@@ -219,11 +241,13 @@ class CredentialKeeper:
                 grant = self.client.refresh_grant()
             except AuthenticationError as exc:
                 self.active = False
+                self._status_changed()
                 raise LostAuthority(
                     f"the provider no longer accepts the coordinator's credential: {exc}"
                 ) from exc
             except HostAPIError as exc:
                 self.active = False
+                self._status_changed()
                 raise LostAuthority(
                     f"refreshing the coordinator's credential was refused: {exc}"
                 ) from exc
@@ -260,6 +284,7 @@ class CredentialKeeper:
                 self.ensure_fresh()
             except LostAuthority as exc:
                 self.lost_authority = str(exc)
+                self._status_changed()
                 return
             except Exception:  # noqa: BLE001 - a ticker never kills the mission
                 pass

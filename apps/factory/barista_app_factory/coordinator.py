@@ -25,6 +25,7 @@ from .mission import Mission, Task
 from .state import MissionState, TaskState
 
 RECEIPT_MEDIA_TYPE = "application/vnd.barista.factory.receipt+json"
+MISSION_RESULT_MEDIA_TYPE = "application/vnd.barista.factory.mission-result+json"
 
 
 class Coordinator:
@@ -43,6 +44,13 @@ class Coordinator:
         # The coordinator's own credential outlives one grant lifetime only if
         # something refreshes it. Injectable so a test can drive the clock.
         self.credential = credential if credential is not None else CredentialKeeper(client)
+        self.credential.set_status_callback(self._persist_credential_status)
+
+    def _persist_credential_status(self, status: dict) -> None:
+        """Keep renewal evidence observable while the workload still lives."""
+        with self.state.lock:
+            self.state.credential = status
+            self.state.save()
 
     # -- durable coordinator scope --------------------------------------- #
     def _ensure_coordinator_session(self) -> str:
@@ -148,10 +156,16 @@ class Coordinator:
             # the receipt is not yet durable. Refresh first if the margin is up.
             self._checkpoint_authority()
             self._harvest_then_reap(task, worker.id, exit_code, checks)
+        elif ts.attempts < self.mission.max_attempts:
+            # A retry reuses the same durable worker but receives a new attempt
+            # idempotency key. Keeping the worker preserves the failed attempt's
+            # workspace and avoids pretending a retry erased its evidence.
+            ts.state = "pending"
+            self.state.save()
         else:
             # Failed workers are NOT reaped: they stay for bounded forensics.
-            ts.state = "failed"
-            self.state.save()
+            # Their final receipt is still durable on the coordinator scope.
+            self._record_failure(task, worker.id, exit_code, checks)
 
     # -- inputs, outputs, and the staging scope ---------------------------- #
     def _staged(self, task_id: str, name: str) -> str:
@@ -214,28 +228,21 @@ class Coordinator:
                 idempotency_key=f"{self.mission.name}:{task.id}:out:{name}",
             )
 
-    def _harvest_then_reap(self, task: Task, worker_id: str, exit_code: int, checks: list) -> None:
-        """Register the receipt (and any harvested artifact) on the durable
-        coordinator scope BEFORE deleting the worker. If deletion happened first,
-        the receipt would not exist — so a retrievable receipt proves harvest
-        completed before the reap."""
+    def _register_receipt(
+        self, task: Task, worker_id: str, exit_code: int, checks: list, *, outcome: str
+    ) -> None:
+        """Make the final attempt observable before its worker can disappear."""
         ts = self.state.tasks[task.id]
         coord = self._ensure_coordinator_session()
-
-        artifact_id = None
-        if task.collect:
-            # Harvest: capture the worker's declared output. (Content-addressed;
-            # with a real runtime this is the worker's /work, here its exec echo.)
-            harvest = self.client.exec(worker_id, ["sh", "-c", "echo collected"])
-            self.client.wait_operation(harvest.operation_id, timeout=60)
-
         receipt = {
             "mission": self.mission.name,
             "task": task.id,
             "worker": ts.worker,
+            "outcome": outcome,
+            "attempts": ts.attempts,
             "exit_code": exit_code,
             "checks": checks,
-            "harvested": bool(task.collect),
+            "harvested": bool(task.collect) if outcome == "ok" else False,
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         # Content-addressed with the ecosystem's one canonical serialization
@@ -250,15 +257,30 @@ class Coordinator:
             media_type=RECEIPT_MEDIA_TYPE,
             idempotency_key=f"{self.mission.name}:{task.id}:receipt",
         )
-        artifact_id = artifact.id
 
         # Atomic under the state lock so a concurrent save never captures the
         # receipt-set-but-still-running tear.
         with self.state.lock:
             ts.receipt = receipt
-            ts.receipt_artifact_id = artifact_id
-            ts.state = "ok"
+            ts.receipt_artifact_id = artifact.id
+            ts.state = outcome
             self.state.save()
+
+    def _record_failure(self, task: Task, worker_id: str, exit_code: int, checks: list) -> None:
+        self._register_receipt(task, worker_id, exit_code, checks, outcome="failed")
+
+    def _harvest_then_reap(self, task: Task, worker_id: str, exit_code: int, checks: list) -> None:
+        """Register the receipt (and any harvested artifact) on the durable
+        coordinator scope BEFORE deleting the worker. If deletion happened first,
+        the receipt would not exist — so a retrievable receipt proves harvest
+        completed before the reap."""
+        if task.collect:
+            # Harvest: capture the worker's declared output. (Content-addressed;
+            # with a real runtime this is the worker's /work, here its exec echo.)
+            harvest = self.client.exec(worker_id, ["sh", "-c", "echo collected"])
+            self.client.wait_operation(harvest.operation_id, timeout=60)
+
+        self._register_receipt(task, worker_id, exit_code, checks, outcome="ok")
 
         # The reap: only now, with the receipt durable, delete the worker.
         try:
@@ -299,6 +321,27 @@ class Coordinator:
             self.state.state = "done"
             self.state.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.state.save()
+        if self.state.state == "done":
+            self._register_mission_result()
+
+    def _register_mission_result(self) -> None:
+        """Leave durable evidence that the coordinator reached its conclusion."""
+        result = {
+            "mission": self.mission.name,
+            "state": self.state.state,
+            "summary": self.state.summary(),
+            "credential": self.state.credential,
+            "authority_lost": self.state.authority_lost,
+        }
+        blob = canonical_bytes(result)
+        self.client.register_artifact(
+            self._ensure_coordinator_session(),
+            name="mission-result.json",
+            digest=content_id(result),
+            size_bytes=len(blob),
+            media_type=MISSION_RESULT_MEDIA_TYPE,
+            idempotency_key=f"{self.mission.name}:result",
+        )
 
     # -- scheduling -------------------------------------------------------- #
     def _ready(self) -> list[Task]:

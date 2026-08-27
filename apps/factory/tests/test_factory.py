@@ -110,7 +110,9 @@ def test_multi_worker_mission_locally_with_cloud_blocked(tmp_path):
                 coord_id = state.coordinator_session_id
                 receipts = client.list_artifacts(coord_id)
                 names = {a.name for a in receipts}
-                assert names == {"receipt-t1.json", "receipt-t2.json", "receipt-t3.json"}
+                assert names == {
+                    "receipt-t1.json", "receipt-t2.json", "receipt-t3.json", "mission-result.json"
+                }
                 for ts in state.tasks.values():
                     assert ts.state == "ok"
                     assert ts.receipt["harvested"] is True
@@ -218,6 +220,66 @@ def _fs_client(provider: _FsProvider) -> BaristaClient:
         headers={"content-type": MANIFEST_MEDIA_TYPE},
     )
     return client
+
+
+class _ExitProvider(_FsProvider):
+    """The filesystem double, with a real non-zero command for failure paths."""
+
+    def _handle(self, request):
+        if request.method == "POST" and request.url.path == "/v1alpha1/sessions":
+            name = json.loads(request.content or b"{}").get("name")
+            existing = next((s for s in self.sessions.values() if s.get("name") == name), None)
+            if existing is not None:
+                return self._json(200, existing)
+        response = super()._handle(request)
+        if request.method == "POST" and request.url.path.endswith("/exec"):
+            command = json.loads(request.content or b"{}").get("command") or []
+            if command == ["false"] and response.status_code == 200:
+                operation_id = response.json()["operation_id"]
+                self.operations[operation_id]["result"]["exit_code"] = 1
+        return response
+
+
+def test_failure_retries_blocks_dependents_and_preserves_forensics(tmp_path):
+    """The final failed attempt gets a receipt but not a reap; work downstream
+    is blocked without an attempt, while an independent success remains durable
+    after its worker disappears."""
+    provider = _ExitProvider()
+    with _fs_client(provider) as client:
+        mission = Mission.load({
+            "name": "failure-paths", "app": WORKER_MANIFEST["name"],
+            "max_attempts": 2, "concurrency": 2,
+            "tasks": [
+                {"id": "bad-check", "command": ["true"], "check": ["false"]},
+                {"id": "blocked", "command": ["true"], "depends_on": ["bad-check"]},
+                {"id": "success", "command": ["true"],
+                 "files": {"/work/out": "kept"}, "produces": {"output": "/work/out"}},
+            ],
+        })
+        state = Coordinator(client, mission, tmp_path / "state.json").run()
+        artifact_names = {a.name for a in client.list_artifacts(state.coordinator_session_id)}
+
+    assert state.state == "done"
+    assert state.summary() == {"total": 3, "ok": 1, "failed": 1, "pending": 0, "blocked": 1}
+
+    failed = state.tasks["bad-check"]
+    assert failed.attempts == 2
+    assert failed.receipt["outcome"] == "failed"
+    assert failed.receipt["attempts"] == 2
+    assert failed.receipt["checks"][-1]["exit_code"] == 1
+    assert failed.receipt_artifact_id
+    assert any(s.get("name") == failed.worker for s in provider.sessions.values()), (
+        "the failed worker was reaped instead of left for forensics"
+    )
+
+    blocked = state.tasks["blocked"]
+    assert blocked.state == "blocked" and blocked.blocked_by == "bad-check"
+    assert blocked.attempts == 0 and blocked.receipt is None
+
+    success = state.tasks["success"]
+    assert success.receipt["outcome"] == "ok"
+    assert not any(s.get("name") == success.worker for s in provider.sessions.values())
+    assert {"success-output", "receipt-success.json", "receipt-bad-check.json"} <= artifact_names
 
 
 def test_a_dependent_runs_after_its_dependency_and_receives_what_it_produced(tmp_path):
@@ -714,6 +776,24 @@ def test_no_mission_anywhere_is_refused_with_a_usable_message(monkeypatch):
     assert MISSION_ENV in str(ei.value)
 
 
+def test_no_endpoint_is_reported_as_configuration_not_a_traceback(monkeypatch):
+    """The workload still exits non-zero, but its own last report names the
+    missing input instead of leaving only GUEST_UNREACHABLE at provider level."""
+    from barista_app_factory.__main__ import MISSION_ENV, main
+
+    monkeypatch.setenv(MISSION_ENV, json.dumps({
+        "name": "missing-endpoint", "app": WORKER_MANIFEST["name"],
+        "tasks": [{"id": "a", "command": ["true"]}],
+    }))
+    monkeypatch.delenv("BARISTA_HOST_API_ENDPOINT", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        main(["run"])
+
+    assert exc.value.code != 0
+    assert "BARISTA_HOST_API_ENDPOINT" in str(exc.value)
+    assert "configuration error" in str(exc.value)
+
+
 def test_the_manifest_declares_the_authority_the_coordinator_actually_uses():
     """The manifest and the code must agree about scope, and they did not.
 
@@ -1022,6 +1102,31 @@ def test_the_ticker_refreshes_during_a_single_long_call():
             lost = keeper.lost_authority
     assert lost is None, lost
     assert refreshes >= 3, refreshes  # establish + at least two ticks
+
+
+def test_ticker_persists_refresh_evidence_before_the_mission_finishes(tmp_path):
+    """A managed workload exits with its session, so a status written only after
+    `run()` returns cannot be observed. Every ticker rotation must reach the
+    durable state while work is still in flight."""
+    provider = MockProvider(
+        name="grant-cloud",
+        capabilities=["grants.delegated"],
+        child_authority=True,
+        grant_lifetime_seconds=0.3,
+    )
+    probe = provider.provision_delegated_probe(FACTORY_MANIFEST)
+    state_path = tmp_path / "state.json"
+    with _coordinator_client(provider, probe) as client:
+        keeper = CredentialKeeper(client, margin_seconds=0.2, check_interval_seconds=0.01)
+        Coordinator(client, _factory_mission(n=1), state_path, credential=keeper)
+        with keeper.running():
+            time.sleep(0.6)
+            persisted = json.loads(state_path.read_text())
+
+    assert persisted["state"] == "running"
+    assert persisted["credential"]["active"] is True
+    assert persisted["credential"]["refreshes"] >= 3
+    assert persisted["credential"]["inactive_reason"] is None
 
 
 def test_a_lapsed_credential_is_reported_as_lost_authority_not_failed_work(tmp_path):
