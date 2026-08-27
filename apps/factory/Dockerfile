@@ -60,8 +60,19 @@ RUN test -x /usr/local/bin/barista-factory \
 RUN mkdir -p /work
 WORKDIR /work
 
-# The manifest's readiness probe watches for this line. Printing it from the
-# image's own default command means a session started without arguments still
-# becomes ready and can be exec'd into — which is how a mission is delivered
-# when the coordinator is driven rather than baked.
-CMD ["sh", "-c", "echo 'coordinator ready'; exec sleep infinity"]
+# Run the coordinator. `__main__.py` prints the readiness line the manifest's
+# probe watches for, immediately before it starts the mission — so readiness
+# means "the coordinator is up and about to work", not "a shell is asleep".
+#
+# This replaces a default of `sh -c "echo 'coordinator ready'; exec sleep
+# infinity"`, which existed so a session could become ready without a mission
+# and be driven from outside by exec. That was a second way to run Factory, and
+# keeping both meant the published image never ran the app it packages: every
+# session booted into a sleep, and `docker run` did something different from a
+# Host API session. One story now — the app runs its mission — and the two
+# agree.
+#
+# The mission arrives in `$BARISTA_FACTORY_MISSION` (apps-005 D1). No argument
+# is given here, because a path argument that is present and unreadable is an
+# error rather than a fallback, and nothing writes /work/mission.json.
+CMD ["/usr/local/bin/barista-factory", "run"]
