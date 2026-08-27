@@ -31,7 +31,7 @@
 
 ## 5. The demo tells the truth
 
-- [ ] 5.1 `demos/factory/missions/e2e-wave.json` in **barista-cloud**: `fizz` and `median` currently instruct the worker to write both the implementation and the test, and the check re-runs the worker's own test. Plant the tests instead. This is tracked here for sequencing and belongs to that repo.
+- [x] 5.1 `demos/factory/missions/e2e-wave.json` in **barista-cloud**: `fizz` and `median` now request implementation code only, and separate check invocations run coordinator-authored inline assertions. Implemented and mutation-tested in barista-cloud #170.
 - [x] 5.2 A mission in this repo demonstrating a real chain (produce → consume → planted check), as `missions/` data rather than as schema — the four-file review ceremony that motivated this change is expressible here and must stay a template, never a schema (design D1).
 - [x] 5.3 `apps/factory/README.md`: what a dependency edge means, what planting is *for* (the criterion is not the worker's to write), and D3's stated limitation — this bounds self-marking, it does not eliminate tampering with what the check reads.
 
