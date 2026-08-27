@@ -126,7 +126,9 @@ def test_full_standalone_acceptance_with_cloud_blocked(tmp_path):
                 fstate = Coordinator(client, mission, tmp_path / "mission.json").run()
                 assert fstate.summary() == {"total": 2, "ok": 2, "failed": 0, "pending": 0}
                 receipts = client.list_artifacts(fstate.coordinator_session_id)
-                assert {a.name for a in receipts} == {"receipt-t1.json", "receipt-t2.json"}
+                assert {a.name for a in receipts} == {
+                    "receipt-t1.json", "receipt-t2.json", "mission-result.json"
+                }
 
                 # (5) Semantic Lift with the Pi adapter (native -> new session).
                 workspace = "/work/acc-project"

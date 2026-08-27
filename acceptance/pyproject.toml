@@ -1,7 +1,7 @@
 [project]
 name = "barista-acceptance"
 version = "0.1.0a1"
-description = "Standalone acceptance flow: the whole open stack offline with Barista Cloud blocked."
+description = "Offline standalone and opt-in managed-provider acceptance flows."
 requires-python = ">=3.10"
 dependencies = [
     "barista-app-sdk",
@@ -26,3 +26,7 @@ barista-app-story = { path = "../apps/story", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: real elapsed-time acceptance excluded from the default run",
+]
