@@ -169,6 +169,34 @@ def test_delegated_grants_provider_certifies_the_profile_unattended():
     assert config.acquired is not None and config.acquired.sessions == []
 
 
+def test_partial_credential_acquisition_is_cleaned_up_when_a_request_raises():
+    """The coordinator exists before the child request. An exception at that
+    boundary used to lose the function-local cleanup list and leak one new probe
+    every time a later case retried acquisition."""
+    provider = _self_serving_provider()
+    real_handle = provider._handle
+
+    def fail_child_creation(request):
+        if request.method == "POST" and request.url.path == "/v1alpha1/sessions":
+            body = json.loads(request.content or b"{}")
+            if str(body.get("name", "")).startswith("conf-probe-worker-"):
+                raise RuntimeError("injected child acquisition failure")
+        return real_handle(request)
+
+    provider._handle = fail_child_creation
+    config = _config()
+    report = run_conformance(config, transport=provider.transport())
+
+    failed = [case for case in report.cases if case.status is Status.FAILED]
+    assert any("injected child acquisition failure" in case.message for case in failed)
+    assert not [
+        session
+        for session in provider.sessions.values()
+        if str(session.get("name", "")).startswith("conf-probe-")
+    ], "a partial delegated probe survived the run"
+    assert config.acquired is not None and config.acquired.sessions == []
+
+
 def test_the_three_apps_002_cases_no_longer_need_an_operator():
     """Named explicitly because it is the thing apps-003 exists to fix: these
     three were fully written and permanently skipped for want of a credential no
@@ -203,6 +231,10 @@ def test_operator_supplied_credentials_still_take_precedence():
     assert not conformant
     assert any("refresh_refused_after_expiry" in v for v in violations), violations
     assert report.environment["delegated_credentials"] == "operator-supplied credentials"
+    # The suite may rotate operator credentials, but their sessions are not its
+    # resources and never enter the suite-owned cleanup ledger.
+    assert probe.coordinator_session_id in provider.sessions
+    assert probe.worker_session_id in provider.sessions
 
 
 def test_worker_that_inherits_the_coordinators_authority_is_caught():
