@@ -30,4 +30,4 @@
 - [x] 5.1 Add offline fake GitHub and Host API end-to-end acceptance from signed webhook through draft result and cleanup.
 - [x] 5.2 Prove invalid signatures, unsupported events, duplicate deliveries, malicious issue text, failed checks, and publication refusal are inert/safe.
 - [x] 5.3 Run affected package tests, standalone acceptance, supply-chain checks, and strict OpenSpec.
-- [ ] 5.4 Run an opt-in disposable real-GitHub issue-to-draft demo and record exact evidence before archiving.
+- [x] 5.4 Run an opt-in disposable real-GitHub issue-to-draft demo and record exact evidence before archiving.

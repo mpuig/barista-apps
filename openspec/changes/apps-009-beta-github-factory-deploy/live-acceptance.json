@@ -1,0 +1,12 @@
+{
+  "base_commit": "42155f201a0da9db0e969d8cf9eb2907465337c5",
+  "draft": "https://github.com/mpuig/barista-factory-demo/pull/3",
+  "factory_result_digest": "sha256:17e6ecc33dc46f56de359289f2409cf9f887cee396bfdd8116e6641937833d96",
+  "factory_sessions_absent": true,
+  "head_commit": "d7329557d97487093c33b14f81525b74d8c1865b",
+  "issue": "https://github.com/mpuig/barista-factory-demo/issues/2",
+  "patch_digest": "sha256:2fc5417361957e3ddb392b555e68e90fd2bf7543a304e473518e5773db83409d",
+  "repository": "https://github.com/mpuig/barista-factory-demo",
+  "run": "github-0853c04f40-issue-2",
+  "schema_version": "v1alpha1"
+}
