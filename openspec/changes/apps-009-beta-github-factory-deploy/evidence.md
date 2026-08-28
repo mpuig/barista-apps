@@ -16,5 +16,16 @@ Contents API, normalizes a non-`main` account default branch if necessary, and
 then verifies/creates the remaining exact seed files. A focused empty-repository
 test pins that sequence and excludes the failing blob path.
 
-Runtime GitHub token provisioning and real issue acceptance intentionally wait
-for the user-supplied repository-scoped token.
+The repository-scoped runtime token was provisioned over SSH stdin and the
+controller became healthy through both loopback and public HTTPS. The first
+real issue was accepted as run `github-0853c04f40-issue-1`, but the Factory
+workload exited before orchestration because its owning session received the
+provider-injected token without the provider endpoint. The controller reported
+`app_run.result_timeout` after 1800 seconds and preserved the failed session.
+Managed-node evidence showed the more specific startup error:
+`BARISTA_HOST_API_ENDPOINT is required`.
+
+The controller now passes its Barista client's non-secret provider endpoint in
+the owning-session environment while leaving bearer-token injection exclusively
+to the provider grant. Offline acceptance asserts this exact authority split.
+A fresh live issue remains required after deploying this correction.

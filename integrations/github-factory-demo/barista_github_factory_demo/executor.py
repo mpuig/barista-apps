@@ -268,6 +268,10 @@ class FactoryRunExecutor:
                 run,
                 resolved.manifest_document(),
                 install=False,
+                # The endpoint is non-secret provider configuration needed by
+                # coordinator apps that call their Host API. The provider still
+                # injects the separately granted bearer credential.
+                env={"BARISTA_HOST_API_ENDPOINT": client.config.endpoint},
             )
             collected = client.wait_app_run(
                 run,
