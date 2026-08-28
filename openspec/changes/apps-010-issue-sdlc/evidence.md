@@ -15,7 +15,7 @@
 ## Checks
 
 - Factory: 78 tests passed, including triage stop/ready/refused, context propagation, recoverable acceptance failure, malformed decisions, independent checks, moving bases, and patch integrity.
-- GitHub controller and offline acceptance: 34 tests passed, including unclear → verified question → authorized answer → fresh attempt → verified draft, wrong-target refusal, deduplication, and database migration.
+- GitHub controller and offline acceptance: 35 tests passed, including unclear → verified question → authorized answer → fresh attempt → verified draft, wrong-target refusal, deduplication, database migration, and the opt-in live clarification exerciser.
 - Deterministic triage worker: 6 tests passed.
 - Deterministic implementation worker: 6 tests passed.
 - Standalone acceptance: 1 passed, 3 managed tests skipped, 1 opt-in test deselected.

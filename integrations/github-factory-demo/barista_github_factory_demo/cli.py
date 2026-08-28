@@ -85,6 +85,11 @@ def _parser() -> argparse.ArgumentParser:
         "--output", type=Path, default=Path("github-factory-live-evidence.json")
     )
     accept.add_argument("--timeout", type=float, default=1800)
+    accept.add_argument(
+        "--clarify",
+        action="store_true",
+        help="Exercise clarification, an authorized answer, and a fresh attempt.",
+    )
     return parser
 
 
@@ -146,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             controller_url=args.controller_url,
             output=args.output,
             timeout=args.timeout,
+            clarify=args.clarify,
         )
         print(json.dumps(evidence, indent=2, sort_keys=True))
         return 0

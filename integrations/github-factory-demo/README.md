@@ -189,12 +189,15 @@ For an opt-in real-GitHub acceptance against the running public controller:
 ```sh
 uv run barista-github-demo accept \
   --controller-url https://PUBLIC_HOST \
+  --clarify \
   --output github-factory-live-evidence.json
 ```
 
-This creates a real issue, waits by issue identity, verifies the draft flag,
-exact base/head, patch marker, canonical Factory result digest, and owning-session
-absence, then writes non-secret evidence. It is intentionally not part of CI.
+With `--clarify`, this creates an unclear real issue, verifies the correlated
+question comment, posts one authorized answer, requires a fresh attempt, then
+verifies the draft flag, exact base/head, patch marker, canonical Factory result
+digest, and owning-session absence. It writes non-secret evidence and is
+intentionally not part of CI. Omit `--clarify` for the direct-ready path.
 
 Factory/session failures and pre-delivery verification failures are recorded as
 `failed` and preserve the owning session for bounded operator forensics. A
