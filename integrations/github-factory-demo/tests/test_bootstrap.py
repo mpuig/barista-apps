@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
+import httpx
 import pytest
-from barista_github_factory_demo.bootstrap import setup_demo, teardown_demo
+from barista_github_factory_demo.bootstrap import (
+    SEED_FILES,
+    GitHubAdmin,
+    setup_demo,
+    teardown_demo,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -41,6 +48,44 @@ class Client:
         if self.fail:
             raise RuntimeError("provider unavailable")
         return {"ok": True}
+
+
+def test_empty_repository_is_seeded_through_contents_before_branch_files(monkeypatch):
+    calls = []
+    created_readme = False
+
+    def request(method, url, **kwargs):
+        nonlocal created_readme
+        calls.append((method, url, kwargs))
+        if url.endswith("/git/ref/heads/main"):
+            return httpx.Response(409, json={"message": "Git Repository is empty."})
+        if url.endswith("/repos/acme/demo"):
+            return httpx.Response(200, json={"default_branch": "main"})
+        if url.endswith("/contents/README.md") and method == "GET":
+            if created_readme:
+                return httpx.Response(
+                    200,
+                    json={"content": base64.b64encode(SEED_FILES["README.md"].encode()).decode()},
+                )
+            return httpx.Response(404, json={"message": "not found"})
+        if url.endswith("/contents/README.md") and method == "PUT":
+            created_readme = True
+            return httpx.Response(201, json={"content": {}})
+        if "/contents/" in url and method == "GET":
+            return httpx.Response(404, json={"message": "not found"})
+        if "/contents/" in url and method == "PUT":
+            return httpx.Response(201, json={"content": {}})
+        raise AssertionError((method, url, kwargs))
+
+    monkeypatch.setattr(httpx, "request", request)
+
+    GitHubAdmin("bootstrap-token").ensure_seed("acme", "demo")
+
+    assert created_readme
+    assert not any("/git/blobs" in url for _, url, _ in calls)
+    put_documents = [kwargs["json"] for method, _, kwargs in calls if method == "PUT"]
+    assert "branch" not in put_documents[0]
+    assert all(document.get("branch") == "main" for document in put_documents[1:])
 
 
 def test_setup_seeds_webhook_installs_digest_pinned_apps_and_writes_non_secret_state(
