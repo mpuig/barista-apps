@@ -11,17 +11,17 @@
 - [x] 2.1 Add immutable SDK models for `AppRun`, `RunBinding`, `SecretReference`, `DeliveryRequest`, `RunOperation`, and `AppRunResult` with canonical JSON serialization.
 - [x] 2.2 Validate an envelope against its selected manifest operation before any transport call, including embedded input schemas when present.
 - [x] 2.3 Add read access to an installed app's validated manifest in the Host API contract, local provider, SDK, and conformance suite; resolved secret values must never appear.
-- [ ] 2.4 Inject the provider-allocated opaque owning-session handle as reserved `BARISTA_APP_SESSION_ID`, refuse caller overrides before creation, and prove an app can register on its own scope. *(Contract, local provider, SDK constant, refusal conformance, and Factory adoption are implemented; managed-provider implementation and a black-box entrypoint observation remain.)*
+- [x] 2.4 Inject the provider-allocated opaque owning-session handle as reserved `BARISTA_APP_SESSION_ID`, refuse caller overrides before creation, and prove an app can register on its own scope.
 - [x] 2.5 Add typed app resolution for an installed app and a local manifest source; record exact source revision, manifest identity, and workload digest.
-- [ ] 2.6 Compile a validated run to one idempotently ensured owning session using only the existing Host API and canonical `BARISTA_APP_RUN` launch configuration. *(Launch compilation, stable content-derived keys, exact envelope delivery, and Factory bootstrap mapping are implemented; lifecycle observation remains.)*
-- [ ] 2.7 Collect the canonical result from the owning session, verify its registered digest, persist requested output, and preserve the session on collection failure.
+- [x] 2.6 Compile a validated run to one idempotently ensured owning session using only the existing Host API and canonical `BARISTA_APP_RUN` launch configuration.
+- [x] 2.7 Collect the canonical result from the owning session, verify its registered digest, persist requested output, and preserve the session on collection failure.
 
 ## 3. Portable runner CLI
 
-- [ ] 3.1 Add an OSS runner command that accepts `--app`, `--input`, repeatable `--bind`, `--output`, and cleanup/detach controls and emits the canonical envelope it runs.
+- [x] 3.1 Add an OSS runner command that accepts `--app`, `--input`, repeatable `--bind`, `--output`, and cleanup/detach controls and emits the canonical envelope it runs.
 - [ ] 3.2 Add convenience projections for repository, issue, mission, and delivery without creating a second wire shape.
 - [ ] 3.3 Resolve a remote app repository only through an exact revision and valid digest-pinned manifest; require an explicit development mode for building app source.
-- [ ] 3.4 Keep the runner provider-neutral so a managed CLI can expose the same behavior as `barista run` without the OSS package importing managed code.
+- [x] 3.4 Keep the runner provider-neutral so a managed CLI can expose the same behavior as `barista run` without the OSS package importing managed code.
 
 ## 4. Source and forge adapters
 

@@ -1329,3 +1329,75 @@ def test_the_keeper_is_inactive_and_harmless_without_the_capability(tmp_path):
     assert keeper.refreshes == 0
     assert "does not advertise grants.delegated" in keeper.inactive_reason
     assert state.credential["inactive_reason"] == keeper.inactive_reason
+
+
+def test_factory_typed_result_identity_matches_manifest():
+    from barista_app_factory.__main__ import FACTORY_VERSION, FACTORY_WORKLOAD_DIGEST
+
+    manifest = json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())
+    assert FACTORY_VERSION == manifest["version"]
+    assert FACTORY_WORKLOAD_DIGEST == manifest["workload"]["digest"]
+
+
+def test_factory_publishes_canonical_result_on_owning_scope(tmp_path, monkeypatch):
+    import barista_app_sdk.lifecycle as lifecycle
+    from barista_app_factory.__main__ import (
+        FACTORY_MISSION_MEDIA_TYPE,
+        _publish_typed_result,
+    )
+    from barista_app_factory.state import MissionState, TaskState
+    from barista_app_sdk import APP_SESSION_ID_ENV, AppRun, Artifact
+
+    run = AppRun.parse(
+        {
+            "schema_version": "v1alpha1",
+            "name": "factory-result",
+            "app": "factory@0.1.0",
+            "operation": "mission",
+            "input": {
+                "media_type": FACTORY_MISSION_MEDIA_TYPE,
+                "value": {"name": "factory-result", "app": "worker", "tasks": []},
+            },
+        }
+    )
+    state = MissionState(
+        mission="factory-result",
+        state="done",
+        finished_at="2026-08-28T00:01:00Z",
+        tasks={
+            "done": TaskState(
+                id="done",
+                state="ok",
+                receipt={"mission": "factory-result", "task": "done", "outcome": "ok"},
+            )
+        },
+    )
+
+    class Client:
+        registration = None
+
+        def register_artifact(self, session_id, **fields):
+            self.registration = (session_id, fields)
+            return Artifact(
+                id="result-1",
+                name=fields["name"],
+                digest=fields["digest"],
+                size_bytes=fields["size_bytes"],
+                media_type=fields["media_type"],
+                created_at="2026-08-28T00:01:00Z",
+            )
+
+    client = Client()
+    result_path = tmp_path / "app-run-result.json"
+    monkeypatch.setattr(lifecycle, "APP_RUN_RESULT_PATH", str(result_path))
+    monkeypatch.setenv(APP_SESSION_ID_ENV, "factory-result")
+
+    _publish_typed_result(client, run, state)
+
+    document = json.loads(result_path.read_bytes())
+    assert document["state"] == "succeeded"
+    assert document["run"] == run.name
+    assert document["outputs"]["result"]["digest"].startswith("sha256:")
+    assert document["evidence"][0]["metadata"]["task"] == "done"
+    assert client.registration[0] == "factory-result"
+    assert client.registration[1]["name"] == "app-run-result.json"

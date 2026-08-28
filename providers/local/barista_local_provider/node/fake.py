@@ -91,8 +91,18 @@ class FakeNodeClient:
         workdir: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
     ) -> ExecResult:
-        self._require(instance_id)
-        # A deterministic echo: enough to exercise exec/exit/streams offline.
+        instance = self._require(instance_id)
+        # `printenv NAME` is the smallest black-box observation that exec runs in
+        # the session environment rather than an unrelated agent environment.
+        # Per-exec values override the base process exactly as a real node does.
+        effective_env = {**instance.get("env", {}), **(env or {})}
+        if len(command) == 2 and command[0] == "printenv":
+            value = effective_env.get(command[1])
+            if value is None:
+                return ExecResult(exit_code=1, stdout=b"", stderr=b"")
+            return ExecResult(exit_code=0, stdout=(value + "\n").encode(), stderr=b"")
+
+        # A deterministic echo for commands the tooling backend does not execute.
         rendered = " ".join(shlex.quote(c) for c in command)
         return ExecResult(exit_code=0, stdout=(rendered + "\n").encode(), stderr=b"")
 

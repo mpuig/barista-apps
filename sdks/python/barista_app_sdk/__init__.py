@@ -17,6 +17,14 @@ from __future__ import annotations
 from . import adapters, attach, errors, sensitive
 from .client import BaristaClient
 from .config import Config
+from .lifecycle import (
+    APP_RUN_RESULT_ARTIFACT,
+    APP_RUN_RESULT_PATH,
+    CollectedAppRun,
+    collect_app_run_result,
+    register_app_run_result,
+    wait_app_run,
+)
 from .models import Artifact, Discovery, Event, ExecHandle, Grant, InstalledApp, Operation, Session
 from .resolution import ResolvedApp, resolve_app, resolve_installed_app, resolve_local_app
 from .runs import (
@@ -67,6 +75,12 @@ __all__ = [
     "APP_RUN_MEDIA_TYPE",
     "APP_RUN_RESULT_MEDIA_TYPE",
     "APP_SESSION_ID_ENV",
+    "APP_RUN_RESULT_ARTIFACT",
+    "APP_RUN_RESULT_PATH",
+    "CollectedAppRun",
+    "collect_app_run_result",
+    "register_app_run_result",
+    "wait_app_run",
     "errors",
     "sensitive",
     "adapters",

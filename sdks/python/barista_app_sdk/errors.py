@@ -60,6 +60,16 @@ class InvalidRequestError(HostAPIError):
     pass
 
 
+class ResultCollectionError(HostAPIError):
+    """A result could not be observed or retrieved; the owning session is preserved."""
+
+    retryable = True
+
+
+class ResultIntegrityError(HostAPIError):
+    """Retrieved result bytes failed size, digest, schema, or identity verification."""
+
+
 _CLASS_MAP = {
     "authentication": AuthenticationError,
     "authorization": AuthorizationError,

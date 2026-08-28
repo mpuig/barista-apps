@@ -270,10 +270,30 @@ def session_self_id_is_reserved(client, config, advertised):
     assert after.status_code == 200, after.text
     after_ids = {item["id"] for item in after.json().get("items", [])}
     assert after_ids == before_ids, "refused reserved environment created a session"
+
+    # Refusal alone is not implementation: a dishonest provider could reserve
+    # the name and inject nothing. Observe the value through the same Host API
+    # exec/events path an app uses, and require the exact logical session id.
+    session_name = "self-id-" + new_idempotency_key()
+    created = client.ensure_session(
+        {"app": manifest["name"], "name": session_name}, key=new_idempotency_key()
+    )
+    assert created.status_code in (200, 201), created.text
+    session_id = created.json()["id"]
+    try:
+        state = _wait_until_running(client, session_id)
+        assert state in ("ready", "running"), f"self-id probe reached {state}"
+        observed = _read_session_env(client, session_id, "BARISTA_APP_SESSION_ID")
+        assert observed == session_id, (
+            f"workload observed BARISTA_APP_SESSION_ID={observed!r}, expected {session_id!r}"
+        )
+    finally:
+        client.delete_session(session_id, key=new_idempotency_key())
+
     return ok(
         "core.session_self_id_is_reserved",
         CORE,
-        "caller cannot forge provider-injected owning-session handle",
+        "caller cannot forge the handle; workload receives its exact owning session id",
     )
 
 

@@ -8,6 +8,9 @@ dependencies = [
     "jsonschema[format]>=4.20",
 ]
 
+[project.scripts]
+barista-app = "barista_app_sdk.cli:main"
+
 [project.optional-dependencies]
 ws = ["websockets>=12.0"]
 test = [

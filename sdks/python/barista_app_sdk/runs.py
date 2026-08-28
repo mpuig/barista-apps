@@ -11,6 +11,8 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
+from importlib import resources
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
@@ -368,16 +370,37 @@ def _validate_slots(
         )
 
 
+@lru_cache(maxsize=1)
+def _result_validator() -> Draft202012Validator:
+    path = resources.files("barista_app_sdk").joinpath(
+        "_contracts/app-run-result-v1alpha1.schema.json"
+    )
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+
+
 @dataclass(frozen=True)
 class AppRunResult:
-    """Deep-frozen result document; semantic validation belongs to its schema."""
+    """A schema-validated, deep-frozen canonical result document."""
 
     document: Mapping[str, Any]
 
     @classmethod
     def parse(cls, value: Mapping[str, Any]) -> "AppRunResult":
-        if value.get("schema_version") != "v1alpha1":
-            raise _invalid("result.schema_version must be v1alpha1")
+        if not isinstance(value, Mapping):
+            raise _invalid("result must be an object")
+        validation_errors = sorted(
+            _result_validator().iter_errors(value),
+            key=lambda error: list(error.absolute_path),
+        )
+        if validation_errors:
+            first = validation_errors[0]
+            path = ".".join(str(part) for part in first.absolute_path) or "result"
+            raise _invalid(
+                f"result is invalid at {path}: {first.message}",
+                details={"path": list(first.absolute_path), "validator": first.validator},
+            )
         return cls(document=_freeze(value))
 
     def to_document(self) -> dict:
