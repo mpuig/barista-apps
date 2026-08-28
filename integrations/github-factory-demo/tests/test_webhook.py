@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -360,6 +361,43 @@ def test_failure_status_redacts_controller_credentials(tmp_path):
     assert "webhook-secret" not in result["error"]
     assert "redacted" in result["error"]
     controller.close()
+
+
+def test_existing_controller_database_is_migrated_without_losing_claims(tmp_path):
+    path = tmp_path / "old.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE deliveries (
+            delivery_id TEXT PRIMARY KEY,
+            repository TEXT NOT NULL,
+            issue_number INTEGER NOT NULL,
+            issue_uri TEXT NOT NULL,
+            status TEXT NOT NULL,
+            run_name TEXT NOT NULL,
+            result_json TEXT,
+            error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(repository, issue_number)
+        );
+        INSERT INTO deliveries VALUES (
+            'old-delivery', 'https://github.com/acme/demo', 3,
+            'https://github.com/acme/demo/issues/3', 'accepted',
+            'github-62924231c5-issue-3', NULL, NULL, 1, 1
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = DeliveryStore(path)
+    document = store.get("old-delivery")
+    recovered = store.recoverable()
+    assert document is not None and document["attempt"] == 1
+    assert len(recovered) == 1
+    assert recovered[0].run_name == "github-62924231c5-issue-3"
+    store.close()
 
 
 def test_restart_recovers_a_durable_accepted_claim(tmp_path):
