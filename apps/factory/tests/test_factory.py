@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import socket
 import sys
@@ -751,6 +752,78 @@ def test_a_mission_can_arrive_in_the_environment(monkeypatch):
         "tasks": [{"id": "a", "command": ["true"]}],
     }))
     assert _load_mission(None).name == "from-env"
+
+
+def test_a_generic_app_run_maps_to_the_canonical_factory_mission(monkeypatch):
+    from barista_app_factory.__main__ import (
+        FACTORY_MISSION_MEDIA_TYPE,
+        MISSION_ENV,
+        _load_mission,
+    )
+    from barista_app_sdk import APP_RUN_ENV
+
+    mission = {
+        "name": "from-app-run",
+        "app": WORKER_MANIFEST["name"],
+        "tasks": [{"id": "a", "command": ["true"]}],
+    }
+    monkeypatch.delenv(MISSION_ENV, raising=False)
+    monkeypatch.setenv(
+        APP_RUN_ENV,
+        json.dumps(
+            {
+                "schema_version": "v1alpha1",
+                "name": "from-app-run",
+                "app": "factory@0.1.0",
+                "operation": "mission",
+                "input": {"media_type": FACTORY_MISSION_MEDIA_TYPE, "value": mission},
+            }
+        ),
+    )
+
+    loaded = _load_mission(None)
+    assert loaded.name == "from-app-run"
+    assert json.loads(os.environ[MISSION_ENV]) == mission
+
+
+def test_factory_refuses_generic_run_fields_its_mission_operation_does_not_declare(monkeypatch):
+    from barista_app_factory.__main__ import (
+        FACTORY_MISSION_MEDIA_TYPE,
+        MISSION_ENV,
+        _load_mission,
+    )
+    from barista_app_sdk import APP_RUN_ENV
+
+    monkeypatch.delenv(MISSION_ENV, raising=False)
+    monkeypatch.setenv(
+        APP_RUN_ENV,
+        json.dumps(
+            {
+                "schema_version": "v1alpha1",
+                "name": "unsupported-binding",
+                "app": "factory@0.1.0",
+                "operation": "mission",
+                "input": {
+                    "media_type": FACTORY_MISSION_MEDIA_TYPE,
+                    "value": {
+                        "name": "unsupported-binding",
+                        "app": WORKER_MANIFEST["name"],
+                        "tasks": [{"id": "a", "command": ["true"]}],
+                    },
+                },
+                "bindings": {
+                    "workspace": {
+                        "kind": "sh.barista.git.repository",
+                        "uri": "https://github.com/acme/site.git",
+                    }
+                },
+            }
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="does not accept bindings"):
+        _load_mission(None)
+    assert MISSION_ENV not in os.environ
 
 
 def test_a_named_mission_path_is_never_replaced_by_the_environment(monkeypatch):

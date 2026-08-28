@@ -12,7 +12,7 @@
 - [x] 2.2 Validate an envelope against its selected manifest operation before any transport call, including embedded input schemas when present.
 - [x] 2.3 Add read access to an installed app's validated manifest in the Host API contract, local provider, SDK, and conformance suite; resolved secret values must never appear.
 - [ ] 2.4 Add typed app resolution for an installed app and a local manifest source; record exact source revision, manifest identity, and workload digest.
-- [ ] 2.5 Compile a validated run to one idempotently ensured owning session using only the existing Host API and canonical `BARISTA_APP_RUN` launch configuration. *(Launch compilation, stable content-derived keys, and exact envelope delivery are implemented; lifecycle observation and app-specific bootstrap mapping remain.)*
+- [ ] 2.5 Compile a validated run to one idempotently ensured owning session using only the existing Host API and canonical `BARISTA_APP_RUN` launch configuration. *(Launch compilation, stable content-derived keys, exact envelope delivery, and Factory bootstrap mapping are implemented; lifecycle observation remains.)*
 - [ ] 2.6 Collect the canonical result from the owning session, verify its registered digest, persist requested output, and preserve the session on collection failure.
 
 ## 3. Portable runner CLI
@@ -33,7 +33,7 @@
 
 - [ ] 5.1 Declare and implement a single-agent repository job using the shared Git binding and canonical patch/result output.
 - [ ] 5.2 Declare Factory's `software-change` coordinator operation with repository and objective bindings plus patch and draft-pull-request deliveries.
-- [ ] 5.3 Map validated Factory mission input to `$BARISTA_FACTORY_MISSION`, preserving explicit-path errors and existing direct invocation.
+- [x] 5.3 Map validated Factory mission input to `$BARISTA_FACTORY_MISSION`, preserving explicit-path errors and existing direct invocation.
 - [ ] 5.4 Give isolated Factory workers equivalent clean bases, collect declared patches, integrate them in the coordinator scope, and run coordinator-owned checks against the integrated tree.
 - [ ] 5.5 Publish only a verified integrated head when draft-pull-request delivery was explicitly requested; otherwise return local artifacts and receipts.
 - [ ] 5.6 Add Story, Lift, and service manifest fixtures/declarations sufficient to prove the run contract supports non-repository jobs and non-terminal lifecycles.
