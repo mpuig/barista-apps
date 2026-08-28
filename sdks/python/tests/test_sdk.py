@@ -36,6 +36,7 @@ from barista_app_sdk import (  # noqa: E402
     errors,
     resolve_installed_app,
     resolve_local_app,
+    resolve_remote_app,
     validate_run,
 )
 from barista_app_sdk.adapters import (  # noqa: E402
@@ -286,6 +287,48 @@ def test_local_app_resolution_records_a_clean_exact_git_revision(tmp_path):
     assert resolved.manifest_document() == manifest
     with pytest.raises(TypeError):
         resolved.manifest["name"] = "changed"  # type: ignore[index]
+
+
+def test_remote_app_resolution_requires_and_records_an_exact_commit(tmp_path):
+    repository = tmp_path / "remote-app.git"
+    app = repository / "apps" / "reviewer"
+    app.mkdir(parents=True)
+    manifest = _job_manifest()
+    (app / "manifest.json").write_text(json.dumps(manifest))
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repository)], check=True)
+    subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "app"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    resolved = resolve_remote_app(
+        f"git+{repository.as_uri()}#{head}:apps/reviewer/manifest.json"
+    )
+
+    assert resolved.manifest_document() == manifest
+    assert resolved.source_revision == head
+    assert resolved.source == f"git+{repository.as_uri()}#apps/reviewer/manifest.json"
+    assert resolved.workload_digest == manifest["workload"]["digest"]
+
+
+def test_remote_app_resolution_refuses_mutable_ref_and_inline_credentials():
+    with pytest.raises(errors.InvalidRequestError) as mutable:
+        resolve_remote_app("git+https://github.com/acme/apps.git#main:apps/demo/manifest.json")
+    assert mutable.value.code == "app_source.mutable_revision"
+
+    with pytest.raises(errors.InvalidRequestError) as credential:
+        resolve_remote_app(
+            "git+https://token@github.com/acme/apps.git#"
+            + "a" * 40
+            + ":apps/demo/manifest.json"
+        )
+    assert credential.value.code == "app_source.inline_credential"
 
 
 def test_dirty_local_app_source_requires_explicit_development_mode(tmp_path):

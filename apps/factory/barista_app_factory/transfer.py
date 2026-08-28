@@ -24,6 +24,7 @@ comfortably inside that. Shipping a tarball is not what this is for.
 from __future__ import annotations
 
 import base64
+import hashlib
 import posixpath
 
 from barista_app_sdk import BaristaClient
@@ -87,7 +88,88 @@ def read_file(client: BaristaClient, session_id: str, path: str) -> bytes:
     return b"".join(chunks)
 
 
-def _digest(raw: bytes) -> str:
-    import hashlib
+def read_file_bounded(
+    client: BaristaClient,
+    session_id: str,
+    path: str,
+    *,
+    max_bytes: int,
+    chunk_bytes: int = 256 * 1024,
+) -> bytes:
+    """Capture a bounded file completely, independent of event-page limits.
 
+    One large `cat` can exceed a provider's maximum event page and look like a
+    valid truncated file. Read a small worker-computed size/digest receipt, then
+    capture fixed-size ranges through separate operation cursors and verify the
+    assembled bytes before returning them.
+    """
+    if max_bytes <= 0 or chunk_bytes <= 0:
+        raise ValueError("transfer bounds must be positive")
+    if not path.startswith("/") or "'" in path or "\n" in path or "\r" in path:
+        raise ValueError("bounded transfer path must be a safe absolute path")
+    # `path` is selected by the coordinator, never by objective content. Keep it
+    # in argv where possible; this fixed metadata script only redirects it.
+    metadata = _capture_exec(
+        client,
+        session_id,
+        ["sh", "-c", f"set -e; wc -c < '{path}'; sha256sum '{path}'"],
+    )
+    try:
+        lines = metadata.decode("ascii").splitlines()
+        size = int(lines[0].strip())
+        expected = lines[1].split()[0]
+    except (UnicodeDecodeError, ValueError, IndexError) as exc:
+        raise TransferError(f"could not validate {path} metadata from {session_id}") from exc
+    if size < 0 or size > max_bytes:
+        raise TransferError(
+            f"{path} from {session_id} is {size} bytes (limit {max_bytes})"
+        )
+    chunks: list[bytes] = []
+    for offset in range(0, size, chunk_bytes):
+        index = offset // chunk_bytes
+        chunks.append(
+            _capture_exec(
+                client,
+                session_id,
+                [
+                    "dd",
+                    f"if={path}",
+                    f"bs={chunk_bytes}",
+                    f"skip={index}",
+                    "count=1",
+                    "status=none",
+                ],
+            )
+        )
+    raw = b"".join(chunks)
+    actual = hashlib.sha256(raw).hexdigest()
+    if len(raw) != size or actual != expected:
+        raise TransferError(f"incomplete or changed capture of {path} from {session_id}")
+    return raw
+
+
+def _capture_exec(client: BaristaClient, session_id: str, command: list[str]) -> bytes:
+    handle = client.exec(session_id, command, timeout_seconds=_TRANSFER_TIMEOUT_S)
+    op = client.wait_operation(handle.operation_id, timeout=_TRANSFER_TIMEOUT_S)
+    exit_code = (op.result or {}).get("exit_code", 1)
+    if not op.done or exit_code != 0:
+        raise TransferError(f"capture command failed in {session_id} (exit {exit_code})")
+    chunks: list[bytes] = []
+    saw_exit = False
+    for event in client.events(session_id, cursor=handle.event_cursor):
+        if event.operation_id is not None and event.operation_id != handle.operation_id:
+            continue
+        if event.type == "exec.stdout":
+            chunk = event.data.get("chunk")
+            if chunk:
+                chunks.append(base64.b64decode(chunk, validate=True))
+        elif event.type == "exec.exit":
+            saw_exit = True
+            break
+    if not saw_exit:
+        raise TransferError(f"capture event stream ended early in {session_id}")
+    return b"".join(chunks)
+
+
+def _digest(raw: bytes) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()

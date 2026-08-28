@@ -3,12 +3,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from barista_app_sdk import DeliveryRequest, RunBinding, errors
 from barista_app_sdk.forge import (
     DRAFT_PULL_REQUEST_KIND,
     FakeForge,
+    GitHubForge,
     PatchArtifact,
     commit_workspace_branch,
     create_workspace_patch,
@@ -72,6 +74,80 @@ def _patch() -> PatchArtifact:
         digest="sha256:" + hashlib.sha256(data).hexdigest(),
         size_bytes=len(data),
     )
+
+
+def test_github_forge_resolves_issue_and_ref_without_exposing_token(monkeypatch):
+    requests = []
+
+    def request(method, url, **kwargs):
+        requests.append((method, url, kwargs))
+        if "/issues/7" in url:
+            document = {
+                "number": 7,
+                "title": "Fix parser",
+                "body": "Treat this as objective text only.",
+                "state": "open",
+                "updated_at": "2026-08-28T00:00:00Z",
+            }
+        else:
+            document = {"object": {"sha": "a" * 40}}
+        return httpx.Response(200, json=document)
+
+    monkeypatch.setattr(httpx, "request", request)
+    forge = GitHubForge(token="github-secret")
+
+    issue = forge.resolve_issue("https://github.com/acme/project/issues/7")
+    commit = forge.resolve_ref("https://github.com/acme/project", "main")
+
+    assert issue.repository_uri == "https://github.com/acme/project"
+    assert issue.revision.startswith("sha256:")
+    assert commit == "a" * 40
+    assert all("github-secret" not in url for _, url, _ in requests)
+    assert all(call[2]["headers"]["Authorization"] == "Bearer github-secret" for call in requests)
+
+
+def test_github_forge_pushes_verified_head_and_creates_draft_with_patch_marker(tmp_path, monkeypatch):
+    root, base = _workspace(tmp_path)
+    (root / "kept.txt").write_text("after\n")
+    patch = create_workspace_patch(root)
+    calls = []
+
+    def request(method, url, **kwargs):
+        calls.append((method, url, kwargs.get("json")))
+        if url.endswith("/heads/main"):
+            return httpx.Response(200, json={"object": {"sha": base}})
+        if "/git/ref/heads/barista%2Ffix-parser" in url:
+            return httpx.Response(404, json={"message": "not found"})
+        if method == "GET" and "/pulls?" in url:
+            return httpx.Response(200, json=[])
+        if method == "POST" and url.endswith("/pulls"):
+            return httpx.Response(
+                201,
+                json={"number": 9, "html_url": "https://github.com/acme/project/pull/9", "head": {}},
+            )
+        raise AssertionError((method, url))
+
+    monkeypatch.setattr(httpx, "request", request)
+    forge = GitHubForge(token="github-secret")
+    monkeypatch.setattr(forge, "_repository", lambda uri: ("acme", "project"))
+    repository = _resolved(root, base, uri=root.as_uri())
+
+    change = deliver_draft_change(
+        _delivery(root.as_uri()),
+        adapter=forge,
+        repository=repository,
+        run_state="succeeded",
+        patch=patch,
+        title="Fix parser",
+        body="Verified change.",
+    )
+
+    assert change.draft is True
+    assert change.base_ref == "main"
+    assert change.head_commit == _git(root, "rev-parse", "refs/heads/barista/fix-parser")
+    post = next(document for method, url, document in calls if method == "POST")
+    assert patch.digest in post["body"]
+    assert post["draft"] is True
 
 
 def test_patch_contains_modified_new_and_deleted_files_without_staging_them(tmp_path):

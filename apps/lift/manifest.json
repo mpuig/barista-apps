@@ -11,6 +11,29 @@
     "working_dir": "/work",
     "readiness": { "type": "none" }
   },
+  "runs": {
+    "move": {
+      "description": "Move or semantically continue a bound session.",
+      "lifecycle": "interactive",
+      "input": {
+        "media_type": "application/json",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["exact", "semantic", "auto"] }
+          }
+        }
+      },
+      "bindings": {
+        "session": { "kinds": ["sh.barista.session"], "required": true }
+      },
+      "outputs": {
+        "session": { "kinds": ["sh.barista.session"], "required": true }
+      }
+    }
+  },
   "capabilities": {
     "optional": [
       { "capability": "session.snapshot.exact" },

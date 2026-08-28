@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -101,11 +104,16 @@ class ResolvedApp:
 
 
 def _run_git(path: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"})
     return subprocess.run(
         ["git", "-C", str(path), *args],
         check=check,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         text=True,
+        timeout=120,
+        env=env,
     )
 
 
@@ -176,6 +184,112 @@ def resolve_local_app(source: str | Path, *, allow_dirty: bool = False) -> Resol
     )
 
 
+_EXACT_GIT_REVISION = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
+
+
+def _parse_remote_app_source(selector: str) -> tuple[str, str, str]:
+    """Parse `git+URL#<exact-commit>:<manifest-path>` without guessing a ref."""
+    if not selector.startswith("git+") or "#" not in selector:
+        raise _invalid(
+            "remote app source must use git+URL#<exact-commit>:<manifest-path>",
+            code="app_source.remote_selector",
+        )
+    location, fragment = selector[4:].split("#", 1)
+    revision, separator, manifest_path = fragment.partition(":")
+    manifest_path = manifest_path if separator else "manifest.json"
+    parsed = urlparse(location)
+    if parsed.scheme not in {"https", "file"} or not parsed.path:
+        raise _invalid(
+            "remote app source must use an HTTPS Git URL",
+            code="app_source.remote_scheme",
+        )
+    if parsed.username is not None or parsed.password is not None or parsed.query:
+        raise _invalid(
+            "remote app source URL must not contain credentials or query parameters",
+            code="app_source.inline_credential",
+        )
+    if not _EXACT_GIT_REVISION.fullmatch(revision):
+        raise _invalid(
+            "remote app source must select a full 40- or 64-hex commit",
+            code="app_source.mutable_revision",
+        )
+    relative = Path(manifest_path)
+    if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise _invalid(
+            "remote app manifest path must be a normalized repository-relative path",
+            code="app_source.manifest_path",
+        )
+    return location, revision.lower(), relative.as_posix()
+
+
+def resolve_remote_app(source: str) -> ResolvedApp:
+    """Read a manifest from one exact remote Git commit without executing source.
+
+    The resolver fetches only the caller-selected immutable commit and reads the
+    manifest with `git show`; it never checks out or builds repository content.
+    """
+    location, revision, manifest_path = _parse_remote_app_source(source)
+    with tempfile.TemporaryDirectory(prefix="barista-app-source-") as temporary:
+        repository = Path(temporary) / "repository"
+        try:
+            subprocess.run(
+                ["git", "init", "--quiet", str(repository)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            _run_git(repository, "remote", "add", "origin", location)
+            fetched = _run_git(
+                repository,
+                "-c",
+                "protocol.file.allow=always",
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                "--no-tags",
+                "origin",
+                revision,
+                check=False,
+            )
+            if fetched.returncode != 0:
+                raise _invalid(
+                    "exact remote app source commit is unavailable",
+                    code="app_source.revision_unavailable",
+                )
+            selected = _run_git(repository, "rev-parse", "FETCH_HEAD").stdout.strip().lower()
+            if selected != revision:
+                raise _invalid(
+                    "remote app source did not resolve to the selected commit",
+                    code="app_source.revision_mismatch",
+                )
+            shown = _run_git(repository, "show", f"{selected}:{manifest_path}", check=False)
+            if shown.returncode != 0:
+                raise _invalid(
+                    f"app manifest not found at exact source path: {manifest_path}",
+                    code="app_source.not_found",
+                )
+        except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+            raise _invalid(
+                "Git failed during remote app source resolution",
+                code="app_source.git_failed",
+            ) from exc
+    try:
+        document = json.loads(shown.stdout)
+    except json.JSONDecodeError as exc:
+        raise _invalid("remote app manifest is not valid JSON") from exc
+    validate_manifest(document)
+    return ResolvedApp(
+        name=document["name"],
+        version=document["version"],
+        workload_digest=document["workload"]["digest"],
+        manifest_digest=content_id(document),
+        manifest=_freeze(document),
+        source=f"git+{location}#{manifest_path}",
+        source_revision=revision,
+        installed=False,
+    )
+
+
 def split_installed_selector(selector: str) -> tuple[str, Optional[str]]:
     """`name` or `name@version`; URLs/paths are resolved elsewhere."""
     if "@" not in selector:
@@ -206,12 +320,14 @@ def resolve_installed_app(client, selector: str) -> ResolvedApp:
 
 
 def resolve_app(client, selector: str, *, allow_dirty: bool = False) -> ResolvedApp:
-    """Resolve an installed selector or an explicit local path/file URI."""
+    """Resolve an installed selector or an explicit local/remote app source."""
+    if selector.startswith("git+"):
+        return resolve_remote_app(selector)
     if selector.startswith("file://") or Path(selector).expanduser().exists():
         return resolve_local_app(selector, allow_dirty=allow_dirty)
     if "://" in selector:
         raise _invalid(
-            "remote app source resolution is not implemented; install a pinned manifest or use a local source",
+            "remote app source must select an exact Git revision",
             code="app_source.unsupported",
         )
     return resolve_installed_app(client, selector)

@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Protocol, runtime_checkable
+from urllib.parse import quote, urlparse
+
+import httpx
 
 from .errors import InvalidRequestError, TerminalError
 from .runs import DeliveryRequest, RunBinding
@@ -74,7 +79,9 @@ class DraftChange:
     repository_uri: str
     number: int
     base_commit: str
+    base_ref: str
     head_branch: str
+    head_commit: str
     title: str
     body: str
     patch_digest: str
@@ -88,7 +95,9 @@ class DraftChange:
                 "repository_uri": self.repository_uri,
                 "number": self.number,
                 "base_commit": self.base_commit,
+                "base_ref": self.base_ref,
                 "head_branch": self.head_branch,
+                "head_commit": self.head_commit,
                 "draft": self.draft,
                 "patch_digest": self.patch_digest,
             },
@@ -142,6 +151,7 @@ class ForgeAdapter(Protocol):
         *,
         repository_uri: str,
         base_commit: str,
+        base_ref: str,
         head_branch: str,
         title: str,
         body: str,
@@ -351,14 +361,259 @@ def deliver_draft_change(
     if not branch or not _BRANCH.fullmatch(branch) or branch.startswith("-") or ".." in branch:
         raise _invalid("delivery requires a safe head_branch", code="delivery.branch")
     assert_no_high_confidence_secrets({"title": title, "body": body})
+    marker = f"<!-- barista-patch-digest:{patch.digest} -->"
+    delivery_body = body if marker in body else body + "\n\n" + marker
     return adapter.create_draft_change(
         repository_uri=repository.uri,
         base_commit=repository.commit,
+        base_ref=base_ref,
         head_branch=branch,
         title=title,
-        body=body,
+        body=delivery_body,
         patch=patch,
     )
+
+
+class GitHubForge:
+    """GitHub issue and draft-PR adapter with token-safe Git publication."""
+
+    issue_kind = GITHUB_ISSUE_KIND
+    delivery_kind = DRAFT_PULL_REQUEST_KIND
+
+    def __init__(self, *, token: str | None = None, api_url: str = "https://api.github.com"):
+        self._token = token
+        self._api_url = api_url.rstrip("/")
+
+    @staticmethod
+    def _repository(uri: str) -> tuple[str, str]:
+        parsed = urlparse(uri)
+        parts = [part for part in parsed.path.split("/") if part]
+        if parsed.scheme != "https" or parsed.hostname != "github.com" or len(parts) != 2:
+            raise _invalid("GitHub adapter requires an https://github.com/OWNER/REPO repository", code="forge.repository")
+        owner, repository = parts
+        repository = repository[:-4] if repository.endswith(".git") else repository
+        if not owner or not repository:
+            raise _invalid("GitHub repository URI is incomplete", code="forge.repository")
+        return owner, repository
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        document: dict | None = None,
+        expected: tuple[int, ...] = (200,),
+    ) -> dict | list:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "barista-app-sdk",
+        }
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        try:
+            response = httpx.request(
+                method,
+                self._api_url + path,
+                headers=headers,
+                json=document,
+                follow_redirects=False,
+                timeout=30.0,
+            )
+        except httpx.HTTPError as exc:
+            raise _refused("GitHub request failed", code="forge.transport") from exc
+        if response.status_code not in expected:
+            raise _refused(
+                f"GitHub request was refused with HTTP {response.status_code}",
+                code="forge.http",
+                details={"status": response.status_code},
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise _refused("GitHub returned invalid JSON", code="forge.response") from exc
+
+    def resolve_issue(self, uri: str) -> ForgeIssue:
+        parsed = urlparse(uri)
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or len(parts) != 4
+            or parts[2] != "issues"
+        ):
+            raise _invalid("GitHub issue URI is invalid", code="binding.issue_uri")
+        try:
+            number = int(parts[3])
+        except ValueError as exc:
+            raise _invalid("GitHub issue number is invalid", code="binding.issue_uri") from exc
+        owner, repository = parts[0], parts[1]
+        document = self._request("GET", f"/repos/{quote(owner)}/{quote(repository)}/issues/{number}")
+        if not isinstance(document, dict) or "pull_request" in document:
+            raise _refused("GitHub objective is not an issue", code="binding.issue_identity")
+        title = str(document.get("title", ""))
+        body = str(document.get("body") or "")
+        state = str(document.get("state", "open"))
+        revision_document = {
+            "number": number,
+            "title": title,
+            "body": body,
+            "state": state,
+            "updated_at": document.get("updated_at"),
+        }
+        revision = "sha256:" + hashlib.sha256(
+            json.dumps(revision_document, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return ForgeIssue(
+            kind=self.issue_kind,
+            uri=uri,
+            repository_uri=f"https://github.com/{owner}/{repository}",
+            number=number,
+            title=title,
+            body=body,
+            revision=revision,
+            state=state,
+        )
+
+    def resolve_ref(self, repository_uri: str, ref: str) -> str:
+        owner, repository = self._repository(repository_uri)
+        encoded = quote(ref, safe="")
+        document = self._request(
+            "GET", f"/repos/{quote(owner)}/{quote(repository)}/git/ref/heads/{encoded}"
+        )
+        if not isinstance(document, dict):
+            raise _refused("GitHub ref response is invalid", code="delivery.base_not_found")
+        return str((document.get("object") or {}).get("sha", ""))
+
+    def create_draft_change(
+        self,
+        *,
+        repository_uri: str,
+        base_commit: str,
+        base_ref: str,
+        head_branch: str,
+        title: str,
+        body: str,
+        patch: PatchArtifact,
+    ) -> DraftChange:
+        if not self._token:
+            raise _refused("GitHub draft delivery requires a token", code="delivery.credential_required")
+        owner, repository = self._repository(repository_uri)
+        with tempfile.TemporaryDirectory(prefix="barista-github-delivery-") as temporary:
+            root = Path(temporary) / "repository"
+            askpass = Path(temporary) / "askpass.sh"
+            askpass.write_text(
+                "#!/bin/sh\ncase \"$1\" in *Username*) printf %s x-access-token;; *) printf %s \"$BARISTA_GITHUB_TOKEN\";; esac\n"
+            )
+            askpass.chmod(0o700)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "GIT_ASKPASS": str(askpass),
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "BARISTA_GITHUB_TOKEN": self._token,
+                    "GIT_AUTHOR_NAME": "Barista App",
+                    "GIT_AUTHOR_EMAIL": "app@barista.invalid",
+                    "GIT_COMMITTER_NAME": "Barista App",
+                    "GIT_COMMITTER_EMAIL": "app@barista.invalid",
+                    "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z",
+                    "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z",
+                }
+            )
+
+            def git(*args: str, input_bytes: bytes | None = None) -> bytes:
+                process = subprocess.run(
+                    ["git", "-C", str(root), *args],
+                    env=env,
+                    input=input_bytes,
+                    stdin=None if input_bytes is not None else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=120,
+                    check=False,
+                )
+                if process.returncode != 0:
+                    raise _refused(
+                        f"GitHub delivery Git operation exited {process.returncode}",
+                        code="delivery.git_failed",
+                    )
+                return process.stdout
+
+            subprocess.run(
+                ["git", "init", "--quiet", str(root)],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=120,
+                check=True,
+            )
+            git("remote", "add", "origin", repository_uri)
+            git("fetch", "--quiet", "--depth=1", "origin", base_commit)
+            git("checkout", "--quiet", "--detach", base_commit)
+            git("apply", "--index", "--binary", "-", input_bytes=patch.data)
+            git("switch", "--quiet", "-c", head_branch)
+            git("commit", "--quiet", "--no-verify", "-m", f"Barista verified change {patch.digest}")
+            head_commit = git("rev-parse", "HEAD").decode("ascii").strip()
+
+            existing_ref: str | None = None
+            try:
+                existing_ref = self.resolve_ref(repository_uri, head_branch)
+            except TerminalError as exc:
+                if exc.code != "forge.http" or exc.details.get("status") != 404:
+                    raise
+            if existing_ref is None:
+                git("push", "--quiet", "origin", f"HEAD:refs/heads/{head_branch}")
+            elif existing_ref != head_commit:
+                raise _refused(
+                    "GitHub draft branch exists with different content",
+                    code="delivery.branch_conflict",
+                )
+
+        existing = self._request(
+            "GET",
+            f"/repos/{quote(owner)}/{quote(repository)}/pulls?state=open&head={quote(owner + ':' + head_branch)}",
+        )
+        if isinstance(existing, list) and existing:
+            pull = existing[0]
+            existing_base = str((pull.get("base") or {}).get("ref", ""))
+            if (
+                patch.digest not in str(pull.get("body") or "")
+                or pull.get("draft") is not True
+                or (existing_base and existing_base != base_ref)
+            ):
+                raise _refused("existing draft does not match delivery", code="delivery.branch_conflict")
+        else:
+            pull = self._request(
+                "POST",
+                f"/repos/{quote(owner)}/{quote(repository)}/pulls",
+                document={
+                    "title": title,
+                    "body": body,
+                    "head": head_branch,
+                    "base": base_ref,
+                    "draft": True,
+                },
+                expected=(201,),
+            )
+        if not isinstance(pull, dict):
+            raise _refused("GitHub pull response is invalid", code="forge.response")
+        actual_head = str((pull.get("head") or {}).get("sha") or head_commit)
+        if actual_head != head_commit:
+            raise _refused("GitHub pull head does not match verified head", code="delivery.head_mismatch")
+        return DraftChange(
+            url=str(pull.get("html_url", "")),
+            repository_uri=repository_uri,
+            number=int(pull["number"]),
+            base_commit=base_commit,
+            base_ref=base_ref,
+            head_branch=head_branch,
+            head_commit=head_commit,
+            title=title,
+            body=body,
+            patch_digest=patch.digest,
+        )
 
 
 @dataclass
@@ -425,6 +680,7 @@ class FakeForge:
         *,
         repository_uri: str,
         base_commit: str,
+        base_ref: str,
         head_branch: str,
         title: str,
         body: str,
@@ -443,12 +699,17 @@ class FakeForge:
                     )
                 return change
         number = len([c for c in self.changes if c.repository_uri == repository_uri]) + 1
+        head_commit = hashlib.sha1(
+            (base_commit + "\0" + patch.digest).encode("ascii")
+        ).hexdigest()
         change = DraftChange(
             url=f"fake://pull/{number}",
             repository_uri=repository_uri,
             number=number,
             base_commit=base_commit,
+            base_ref=base_ref,
             head_branch=head_branch,
+            head_commit=head_commit,
             title=title,
             body=body,
             patch_digest=patch.digest,
