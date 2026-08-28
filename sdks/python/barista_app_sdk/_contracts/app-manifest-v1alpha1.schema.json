@@ -1,0 +1,509 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/app-manifest/v1alpha1/schema.json",
+  "title": "Barista App Manifest",
+  "description": "Portable, least-privilege declaration for packaging and running a Barista application on any conformant Host API provider. Media type: application/vnd.barista.app-manifest.v1alpha1+json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "name",
+    "version",
+    "workload"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Manifest schema version. Establishes wire compatibility.",
+      "const": "v1alpha1"
+    },
+    "name": {
+      "description": "App name. Reverse-DNS or short identifier; combined with version and workload digest it is the app identity.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$",
+      "minLength": 1,
+      "maxLength": 214
+    },
+    "version": {
+      "description": "App version (semver recommended). Part of app identity together with the workload digest.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "workload": {
+      "$ref": "#/$defs/workload"
+    },
+    "runs": {
+      "description": "Optional typed operations exposed through the portable App Run contract. A manifest without this map keeps its direct session-launch behavior but declares no typed run operation.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/run_name" },
+      "additionalProperties": { "$ref": "#/$defs/run_operation" }
+    },
+    "endpoints": {
+      "description": "Optional service endpoints the workload exposes.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/endpoint"
+      }
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "permissions": {
+      "$ref": "#/$defs/permissions"
+    },
+    "state_transfer": {
+      "$ref": "#/$defs/state_transfer"
+    },
+    "metadata": {
+      "description": "Opaque, namespaced app metadata. A host preserves recognized envelope constraints without understanding any specific harness. Keys are app namespaces (reverse-DNS).",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "oci_digest": {
+      "description": "Immutable OCI content digest, e.g. sha256:<64 hex>.",
+      "type": "string",
+      "pattern": "^sha(256|512):[0-9a-f]{64,128}$"
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "digest",
+        "architectures",
+        "entrypoint",
+        "readiness"
+      ],
+      "properties": {
+        "image": {
+          "description": "OCI image reference. A mutable tag here is a human label only and does NOT establish app identity.",
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/oci_digest",
+          "description": "Immutable image digest. Establishes executable identity. Required."
+        },
+        "architectures": {
+          "description": "Supported CPU architectures.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["aarch64", "x86_64"]
+          }
+        },
+        "entrypoint": {
+          "description": "Command executed to start the workload.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "working_dir": {
+          "type": "string"
+        },
+        "readiness": {
+          "$ref": "#/$defs/readiness"
+        }
+      }
+    },
+    "readiness": {
+      "description": "How the host determines the workload is ready to serve.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["exec", "http", "tcp", "log_line", "none"]
+        },
+        "command": {
+          "description": "For type=exec: command whose zero exit means ready.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "http_path": {
+          "description": "For type=http: path polled for a 2xx.",
+          "type": "string"
+        },
+        "port": {
+          "description": "For type=http or type=tcp.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "log_pattern": {
+          "description": "For type=log_line: regex matched against stdout/stderr.",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        }
+      }
+    },
+    "run_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "maxLength": 80
+    },
+    "run_kind": {
+      "description": "Namespaced binding, output, or delivery kind. Providers preserve it without interpreting app-specific semantics.",
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+      "maxLength": 214
+    },
+    "run_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds"],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/run_kind" }
+        },
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string", "maxLength": 1024 }
+      }
+    },
+    "delivery_slot": {
+      "description": "A delivery the caller may explicitly request. Deliveries cannot be required merely by selecting an operation because they may have external side effects.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds"],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/run_kind" }
+        },
+        "description": { "type": "string", "maxLength": 1024 }
+      }
+    },
+    "run_operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "input"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 1024 },
+        "lifecycle": {
+          "type": "string",
+          "enum": ["job", "service", "interactive", "coordinator"]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["media_type"],
+          "properties": {
+            "media_type": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+(?:;[^\\r\\n]+)?$"
+            },
+            "schema": {
+              "description": "Optional inline Draft 2020-12 schema evaluated by the runner before any mutation.",
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/run_name" },
+          "additionalProperties": { "$ref": "#/$defs/run_slot" }
+        },
+        "outputs": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/run_name" },
+          "additionalProperties": { "$ref": "#/$defs/run_slot" }
+        },
+        "deliveries": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/run_name" },
+          "additionalProperties": { "$ref": "#/$defs/delivery_slot" }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "protocol", "port"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": ["http", "websocket", "mcp", "acp", "tcp"]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "capability_id": {
+      "description": "A discoverable Host API capability/profile identifier.",
+      "type": "string",
+      "enum": [
+        "session.pause_resume",
+        "session.snapshot.exact",
+        "session.fork",
+        "capsule.export",
+        "capsule.import",
+        "grants.delegated",
+        "story.publish",
+        "branch.evaluation"
+      ]
+    },
+    "capability_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/capability_id" },
+        "min_contract_version": {
+          "type": "string"
+        },
+        "constraints": {
+          "description": "Optional semantic constraints (e.g. min limits) the provider must satisfy.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "capabilities": {
+      "description": "Host capabilities the app needs. Required capabilities must be advertised by the provider before any side effect; the discovered optional set is delivered to the app at launch.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability_requirement" }
+        },
+        "optional": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability_requirement" }
+        }
+      }
+    },
+    "action_id": {
+      "description": "A Host API action the app may perform. Least-privilege.",
+      "type": "string",
+      "enum": [
+        "session.create",
+        "session.get",
+        "session.list",
+        "session.delete",
+        "session.exec",
+        "session.attach",
+        "session.events",
+        "session.pause",
+        "session.resume",
+        "session.fork",
+        "artifact.read",
+        "artifact.write",
+        "capsule.export",
+        "capsule.import",
+        "story.publish"
+      ]
+    },
+    "action_scope": {
+      "description": "WHICH sessions a declared action may target, relative to the session that holds the authority. 'own_session': only the session the grant was minted for. 'created_sessions': only the sessions that session itself created — never a sibling, a parent, or any other session in the account. A provider SHALL NOT widen a declared scope.",
+      "type": "string",
+      "enum": ["own_session", "created_sessions"]
+    },
+    "action_grant": {
+      "description": "One declared action together with the sessions it applies to. Two equivalent forms: a bare action id, which means exactly {\"action\": <id>, \"scope\": \"own_session\"} and is kept for manifests written before scopes existed; or the object form, which states the scope at the point of declaration. The same action MAY appear once per scope. 'session.create' is collection-level — it authorizes creating a child session and is bounded by permissions.child_sessions, not by a scope — so it is declared as a bare action id and the object form rejects it.",
+      "oneOf": [
+        { "$ref": "#/$defs/action_id" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "scope"],
+          "properties": {
+            "action": { "$ref": "#/$defs/action_id" },
+            "scope": { "$ref": "#/$defs/action_scope" }
+          },
+          "not": {
+            "description": "session.create takes no scope; declare it as the bare action id.",
+            "required": ["action"],
+            "properties": { "action": { "const": "session.create" } }
+          }
+        }
+      ]
+    },
+    "permissions": {
+      "description": "Least-privilege declaration of what the app is allowed to do. Contains only secret references, never plaintext.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "description": "Actions the app itself may perform, each with the sessions it applies to. See $defs/action_grant: a bare action id means the app's own session only; the object form states the scope explicitly.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/action_grant" }
+        },
+        "network": {
+          "$ref": "#/$defs/network_policy"
+        },
+        "secrets": {
+          "description": "Secret references by name only. Plaintext is rejected.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/secret_reference" }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": { "type": "boolean", "default": false },
+            "write": { "type": "boolean", "default": false }
+          }
+        },
+        "publication": {
+          "description": "Publication surfaces the app may use (e.g. story).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["story"]
+          }
+        },
+        "child_sessions": {
+          "$ref": "#/$defs/child_session_limits"
+        },
+        "degraded_modes": {
+          "description": "Named degraded modes the app can validly run in when a host grants less than requested.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "without"],
+            "properties": {
+              "name": { "type": "string" },
+              "without": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/capability_id" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "network_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "egress": {
+          "type": "string",
+          "enum": ["none", "allowlist", "unrestricted"],
+          "default": "none"
+        },
+        "allow": {
+          "description": "For egress=allowlist: host or host:port entries.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "secret_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ref"],
+      "properties": {
+        "name": {
+          "description": "Environment/logical name the workload sees. BARISTA_APP_SESSION_ID is provider-reserved and cannot be a secret channel.",
+          "type": "string",
+          "not": { "const": "BARISTA_APP_SESSION_ID" }
+        },
+        "ref": {
+          "description": "Provider-resolvable reference (a scheme URI such as secret://, grant://, ref://, vault://, or env://). NEVER a plaintext value — the pattern rejects a bare credential.",
+          "type": "string",
+          "pattern": "^(secret|grant|ref|vault|env)://.+$"
+        }
+      }
+    },
+    "child_session_limits": {
+      "description": "Bounds AND authority for the sessions this app creates. The counts bound HOW MANY children; 'actions' declares WHAT a child receives; 'allow_descendants' declares whether a child may create sessions of its own. A block carrying only the counts — every manifest written before those two fields existed — means a child receives no delegated authority at all, which is unchanged behaviour.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrent": { "type": "integer", "minimum": 0 },
+        "max_total": { "type": "integer", "minimum": 0 },
+        "actions": {
+          "description": "The actions a child session receives. The provider is the only minter: it mints this set as the child's grant at child-session create; the parent never handles that credential. Scopes here are relative to the CHILD ('own_session' = the child itself, 'created_sessions' = the grandchildren the child creates). This set MUST be a subset of the app's own — a rule JSON Schema CANNOT express and therefore does NOT enforce. See contracts/app-manifest/README.md ('The subset rule') and the reference implementation in rules.py.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/action_grant" }
+        },
+        "allow_descendants": {
+          "description": "Whether a child session may itself create further sessions. Absent or false: it may not, even though the app itself may — the ratified factory-app scenario. When it is not true, 'actions' MUST NOT contain session.create; the schema enforces that much.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["actions"],
+            "properties": {
+              "actions": { "contains": { "const": "session.create" } }
+            }
+          },
+          "then": {
+            "required": ["allow_descendants"],
+            "properties": { "allow_descendants": { "const": true } }
+          }
+        }
+      ]
+    },
+    "state_transfer": {
+      "description": "Hooks for exact (capsule) and semantic (adapter) session transfer.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exact": {
+          "description": "Whether this app's sessions can be exactly forked/captured (requires provider capability).",
+          "type": "boolean",
+          "default": false
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "adapter": {
+              "description": "Adapter namespace responsible for semantic export/continuation (e.g. sh.barista.adapter.pi).",
+              "type": "string"
+            },
+            "pre_export": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "post_import": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

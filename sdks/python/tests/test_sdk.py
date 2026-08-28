@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -33,6 +34,8 @@ from barista_app_sdk import (  # noqa: E402
     BaristaClient,
     Config,
     errors,
+    resolve_installed_app,
+    resolve_local_app,
     validate_run,
 )
 from barista_app_sdk.adapters import (  # noqa: E402
@@ -254,6 +257,71 @@ def test_launch_app_run_delivers_exact_canonical_envelope_and_is_idempotent():
     # provenance is asserted at the launch environment here and in HTTP contract
     # tests when metadata preservation lands in providers.
     assert run_meta is None
+
+
+def test_local_app_resolution_records_a_clean_exact_git_revision(tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    manifest = _job_manifest()
+    (app_dir / "manifest.json").write_text(json.dumps(manifest))
+    subprocess.run(["git", "init", "-q", str(app_dir)], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "add", "manifest.json"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "commit", "-qm", "app"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(app_dir), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    resolved = resolve_local_app(app_dir)
+
+    assert resolved.name == manifest["name"]
+    assert resolved.version == manifest["version"]
+    assert resolved.workload_digest == manifest["workload"]["digest"]
+    assert resolved.source_revision == head
+    assert resolved.source.startswith("git+file://")
+    assert resolved.manifest_document() == manifest
+    with pytest.raises(TypeError):
+        resolved.manifest["name"] = "changed"  # type: ignore[index]
+
+
+def test_dirty_local_app_source_requires_explicit_development_mode(tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    manifest_path = app_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(_job_manifest()))
+    subprocess.run(["git", "init", "-q", str(app_dir)], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "add", "manifest.json"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "commit", "-qm", "app"], check=True)
+    manifest_path.write_text(json.dumps(_job_manifest(), indent=2) + "\n")
+
+    with pytest.raises(errors.InvalidRequestError) as caught:
+        resolve_local_app(app_dir)
+    assert caught.value.code == "app_source.dirty"
+
+    development = resolve_local_app(app_dir, allow_dirty=True)
+    assert "+dirty:sha256:" in development.source_revision
+
+
+def test_installed_app_resolution_checks_the_requested_version():
+    mock = MockProvider(name="installed-app")
+    manifest = _job_manifest()
+    with BaristaClient(Config(endpoint="http://installed.invalid"), transport=mock.transport()) as client:
+        client.install_app(manifest)
+        resolved = resolve_installed_app(client, "reviewer@1.0.0")
+        with pytest.raises(errors.InvalidRequestError) as caught:
+            resolve_installed_app(client, "reviewer@9.0.0")
+
+    assert resolved.installed is True
+    assert resolved.reference == "reviewer@1.0.0"
+    assert resolved.source == "installed://reviewer"
+    assert resolved.source_revision == resolved.manifest_digest
+    assert caught.value.code == "app_source.version_mismatch"
 
 
 def test_sdk_retrieves_an_installed_app_manifest_for_run_validation():

@@ -18,6 +18,7 @@ from . import adapters, attach, errors, sensitive
 from .client import BaristaClient
 from .config import Config
 from .models import Artifact, Discovery, Event, ExecHandle, Grant, InstalledApp, Operation, Session
+from .resolution import ResolvedApp, resolve_app, resolve_installed_app, resolve_local_app
 from .runs import (
     APP_RUN_ENV,
     APP_RUN_MEDIA_TYPE,
@@ -48,6 +49,10 @@ __all__ = [
     "Event",
     "Grant",
     "InstalledApp",
+    "ResolvedApp",
+    "resolve_app",
+    "resolve_installed_app",
+    "resolve_local_app",
     "AppRun",
     "AppRunResult",
     "RunBinding",

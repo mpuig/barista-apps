@@ -104,10 +104,27 @@ def check_schema_determinism() -> None:
             problems.append(f"contracts/{name}: non-deterministic canonicalization")
 
 
+def check_sdk_contract_copies() -> None:
+    copies = {
+        "sdks/python/barista_app_sdk/_contracts/app-manifest-v1alpha1.schema.json":
+            "contracts/app-manifest/v1alpha1/schema.json",
+    }
+    for packaged_name, canonical_name in copies.items():
+        packaged = REPO / packaged_name
+        canonical = REPO / canonical_name
+        if not packaged.is_file():
+            problems.append(f"{packaged_name}: packaged SDK contract is missing")
+        elif packaged.read_bytes() != canonical.read_bytes():
+            problems.append(
+                f"{packaged_name}: drifted from {canonical_name}; sync before release"
+            )
+
+
 def main() -> int:
     check_manifests()
     check_packages()
     check_schema_determinism()
+    check_sdk_contract_copies()
     if problems:
         print("supply-chain check FAILED:")
         for p in problems:

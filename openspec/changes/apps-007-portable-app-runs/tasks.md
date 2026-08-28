@@ -12,7 +12,7 @@
 - [x] 2.2 Validate an envelope against its selected manifest operation before any transport call, including embedded input schemas when present.
 - [x] 2.3 Add read access to an installed app's validated manifest in the Host API contract, local provider, SDK, and conformance suite; resolved secret values must never appear.
 - [ ] 2.4 Inject the provider-allocated opaque owning-session handle as reserved `BARISTA_APP_SESSION_ID`, refuse caller overrides before creation, and prove an app can register on its own scope. *(Contract, local provider, SDK constant, refusal conformance, and Factory adoption are implemented; managed-provider implementation and a black-box entrypoint observation remain.)*
-- [ ] 2.5 Add typed app resolution for an installed app and a local manifest source; record exact source revision, manifest identity, and workload digest.
+- [x] 2.5 Add typed app resolution for an installed app and a local manifest source; record exact source revision, manifest identity, and workload digest.
 - [ ] 2.6 Compile a validated run to one idempotently ensured owning session using only the existing Host API and canonical `BARISTA_APP_RUN` launch configuration. *(Launch compilation, stable content-derived keys, exact envelope delivery, and Factory bootstrap mapping are implemented; lifecycle observation remains.)*
 - [ ] 2.7 Collect the canonical result from the owning session, verify its registered digest, persist requested output, and preserve the session on collection failure.
 
