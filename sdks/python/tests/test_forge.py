@@ -43,7 +43,9 @@ def _workspace(tmp_path: Path) -> tuple[Path, str]:
     return root, _git(root, "rev-parse", "HEAD")
 
 
-def _resolved(root: Path, commit: str, uri: str = "https://github.com/acme/project.git"):
+def _resolved(
+    root: Path, commit: str, uri: str = "https://github.com/acme/project.git"
+):
     return ResolvedGitRepository(
         uri=uri,
         requested_ref="main",
@@ -103,10 +105,76 @@ def test_github_forge_resolves_issue_and_ref_without_exposing_token(monkeypatch)
     assert issue.revision.startswith("sha256:")
     assert commit == "a" * 40
     assert all("github-secret" not in url for _, url, _ in requests)
-    assert all(call[2]["headers"]["Authorization"] == "Bearer github-secret" for call in requests)
+    assert all(
+        call[2]["headers"]["Authorization"] == "Bearer github-secret"
+        for call in requests
+    )
 
 
-def test_github_forge_pushes_verified_head_and_creates_draft_with_patch_marker(tmp_path, monkeypatch):
+def test_github_forge_posts_issue_comment_without_exposing_token(monkeypatch):
+    requests = []
+
+    def request(method, url, **kwargs):
+        requests.append((method, url, kwargs))
+        if method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            201,
+            json={
+                "html_url": "https://github.com/acme/project/issues/7#issuecomment-1"
+            },
+        )
+
+    monkeypatch.setattr(httpx, "request", request)
+    forge = GitHubForge(token="github-secret")
+
+    comment = forge.create_issue_comment(
+        "https://github.com/acme/project/issues/7",
+        "Draft: https://github.com/acme/project/pull/9",
+    )
+
+    assert comment.endswith("#issuecomment-1")
+    method, url, kwargs = requests[-1]
+    assert method == "POST"
+    assert url.endswith("/repos/acme/project/issues/7/comments")
+    assert "github-secret" not in url and "github-secret" not in repr(kwargs["json"])
+    assert all(
+        request[2]["headers"]["Authorization"] == "Bearer github-secret"
+        for request in requests
+    )
+
+
+def test_github_forge_issue_comment_retry_returns_existing_comment(monkeypatch):
+    requests = []
+    body = "Draft: https://github.com/acme/project/pull/9"
+
+    def request(method, url, **kwargs):
+        requests.append((method, url, kwargs))
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "body": body,
+                    "html_url": "https://github.com/acme/project/issues/7#issuecomment-1",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(httpx, "request", request)
+    forge = GitHubForge(token="github-secret")
+
+    comment = forge.create_issue_comment(
+        "https://github.com/acme/project/issues/7",
+        body,
+    )
+
+    assert comment.endswith("#issuecomment-1")
+    assert [method for method, _, _ in requests] == ["GET"]
+
+
+def test_github_forge_pushes_verified_head_and_creates_draft_with_patch_marker(
+    tmp_path, monkeypatch
+):
     root, base = _workspace(tmp_path)
     (root / "kept.txt").write_text("after\n")
     patch = create_workspace_patch(root)
@@ -123,7 +191,11 @@ def test_github_forge_pushes_verified_head_and_creates_draft_with_patch_marker(t
         if method == "POST" and url.endswith("/pulls"):
             return httpx.Response(
                 201,
-                json={"number": 9, "html_url": "https://github.com/acme/project/pull/9", "head": {}},
+                json={
+                    "number": 9,
+                    "html_url": "https://github.com/acme/project/pull/9",
+                    "head": {},
+                },
             )
         raise AssertionError((method, url))
 
@@ -144,7 +216,9 @@ def test_github_forge_pushes_verified_head_and_creates_draft_with_patch_marker(t
 
     assert change.draft is True
     assert change.base_ref == "main"
-    assert change.head_commit == _git(root, "rev-parse", "refs/heads/barista/fix-parser")
+    assert change.head_commit == _git(
+        root, "rev-parse", "refs/heads/barista/fix-parser"
+    )
     post = next(document for method, url, document in calls if method == "POST")
     assert patch.digest in post["body"]
     assert post["draft"] is True
@@ -295,8 +369,13 @@ def test_draft_delivery_refuses_moving_base(tmp_path):
 
     with pytest.raises(errors.TerminalError) as caught:
         deliver_draft_change(
-            _delivery(uri), adapter=forge, repository=repository,
-            run_state="succeeded", patch=_patch(), title="Fix", body="Verified",
+            _delivery(uri),
+            adapter=forge,
+            repository=repository,
+            run_state="succeeded",
+            patch=_patch(),
+            title="Fix",
+            body="Verified",
         )
 
     assert caught.value.code == "delivery.moving_base"
@@ -332,8 +411,13 @@ def test_draft_delivery_refuses_failed_verification(tmp_path):
 
     with pytest.raises(errors.TerminalError) as caught:
         deliver_draft_change(
-            _delivery(uri), adapter=forge, repository=repository,
-            run_state="failed", patch=_patch(), title="Fix", body="Not verified",
+            _delivery(uri),
+            adapter=forge,
+            repository=repository,
+            run_state="failed",
+            patch=_patch(),
+            title="Fix",
+            body="Not verified",
         )
 
     assert caught.value.code == "delivery.verification_required"

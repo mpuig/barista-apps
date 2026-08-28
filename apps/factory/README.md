@@ -68,8 +68,12 @@ A draft pull request is created through a `ForgeAdapter` only if the run
 explicitly declares the `change` delivery and independent acceptance succeeds.
 The draft records the objective revision, exact base and resulting head,
 app/workload identity, integration-check receipt, integrated patch, and worker
-receipt digests. Without that delivery, the same verified run returns only its
-local patch, optional branch, and canonical result.
+receipt digests. A declared delivery with `options.executor="runner"` instead
+returns the verified patch plus a `pending_deliveries.change` request identity;
+Factory does not contact the forge or claim that side effect completed. This
+keeps forge authority in a trusted trigger such as the GitHub Factory demo.
+Without a delivery, the same verified run returns only its local patch, optional
+branch, and canonical result.
 
 The worker app must provide Git and a long-running exec-capable workload. A
 public GitHub repository works with the shipped network allowlist. Factory uses

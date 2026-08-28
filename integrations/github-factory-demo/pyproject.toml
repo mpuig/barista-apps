@@ -1,0 +1,30 @@
+[project]
+name = "barista-github-factory-demo"
+version = "0.1.0a1"
+description = "Signed GitHub issue webhook controller for ephemeral Barista Factory runs."
+requires-python = ">=3.10"
+dependencies = [
+  "barista-app-sdk",
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "uvicorn>=0.30",
+]
+
+[project.scripts]
+barista-github-demo = "barista_github_factory_demo.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.uv.sources]
+barista-app-sdk = { path = "../../sdks/python", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_github_factory_demo"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
