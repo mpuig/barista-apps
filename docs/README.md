@@ -13,6 +13,8 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
   reference-only secrets, least-privilege permissions, capabilities.
 - [Running typed app operations](app-runs.md) — canonical App Runs, lifecycle
   observation, verified results, detach, and cleanup.
+- [Source and forge adapters](source-and-forge-adapters.md) — immutable Git
+  acquisition, bounded objectives, patches, branches, and explicit draft delivery.
 - [Threat model](threat-model.md) — untrusted apps, delegated grants,
   exact-memory secrets, malicious capsules, stories, adapters, local
   remote-binding, and supply chain.

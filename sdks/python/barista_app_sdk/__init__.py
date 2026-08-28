@@ -14,7 +14,7 @@ The same code runs against Barista Cloud by changing only the endpoint/token.
 
 from __future__ import annotations
 
-from . import adapters, attach, errors, sensitive
+from . import adapters, attach, errors, forge, sensitive, sources
 from .client import BaristaClient
 from .config import Config
 from .lifecycle import (
@@ -26,7 +26,28 @@ from .lifecycle import (
     wait_app_run,
 )
 from .models import Artifact, Discovery, Event, ExecHandle, Grant, InstalledApp, Operation, Session
+from .forge import (
+    DRAFT_PULL_REQUEST_KIND,
+    GITHUB_ISSUE_KIND,
+    BranchOutput,
+    DraftChange,
+    FakeForge,
+    ForgeIssue,
+    PatchArtifact,
+    commit_workspace_branch,
+    create_workspace_patch,
+    deliver_draft_change,
+    resolve_issue_objective,
+)
 from .resolution import ResolvedApp, resolve_app, resolve_installed_app, resolve_local_app
+from .sources import (
+    GIT_REPOSITORY_KIND,
+    ResolvedGitRepository,
+    ResolvedObjective,
+    materialize_git_repository,
+    resolve_git_commit,
+    resolve_local_objective,
+)
 from .runs import (
     APP_RUN_ENV,
     APP_RUN_MEDIA_TYPE,
@@ -77,6 +98,23 @@ __all__ = [
     "APP_SESSION_ID_ENV",
     "APP_RUN_RESULT_ARTIFACT",
     "APP_RUN_RESULT_PATH",
+    "GIT_REPOSITORY_KIND",
+    "GITHUB_ISSUE_KIND",
+    "DRAFT_PULL_REQUEST_KIND",
+    "ResolvedGitRepository",
+    "ResolvedObjective",
+    "ForgeIssue",
+    "DraftChange",
+    "BranchOutput",
+    "PatchArtifact",
+    "FakeForge",
+    "resolve_git_commit",
+    "materialize_git_repository",
+    "resolve_local_objective",
+    "resolve_issue_objective",
+    "create_workspace_patch",
+    "commit_workspace_branch",
+    "deliver_draft_change",
     "CollectedAppRun",
     "collect_app_run_result",
     "register_app_run_result",
@@ -85,4 +123,6 @@ __all__ = [
     "sensitive",
     "adapters",
     "attach",
+    "sources",
+    "forge",
 ]
