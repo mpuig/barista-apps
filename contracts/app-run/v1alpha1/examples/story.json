@@ -1,0 +1,24 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "research-story",
+  "app": "story@0.1.0",
+  "operation": "export",
+  "input": {
+    "media_type": "application/vnd.barista.story-request+json",
+    "value": {
+      "redaction_policy": "default"
+    }
+  },
+  "bindings": {
+    "source": {
+      "kind": "sh.barista.session",
+      "uri": "session://research-42"
+    }
+  },
+  "deliveries": {
+    "bundle": {
+      "kind": "sh.barista.local-artifact",
+      "target": "file://./out/research-story.json"
+    }
+  }
+}

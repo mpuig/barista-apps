@@ -1,0 +1,43 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "improve-site-11",
+  "app": "factory@0.4.2",
+  "operation": "software-change",
+  "input": {
+    "media_type": "application/vnd.barista.factory.mission+json",
+    "value": {
+      "name": "improve-site-11",
+      "app": "pi",
+      "concurrency": 3,
+      "tasks": [
+        {
+          "id": "implement",
+          "prompt": "Implement the bound objective in the bound workspace."
+        }
+      ]
+    }
+  },
+  "bindings": {
+    "workspace": {
+      "kind": "sh.barista.git.repository",
+      "uri": "https://github.com/acme/site.git",
+      "ref": "main",
+      "credential": "forge"
+    },
+    "objective": {
+      "kind": "com.github.issue",
+      "uri": "https://github.com/acme/site/issues/11",
+      "credential": "forge"
+    }
+  },
+  "secrets": {
+    "forge": "secret://github/acme"
+  },
+  "deliveries": {
+    "change": {
+      "kind": "com.github.draft-pull-request",
+      "target": "https://github.com/acme/site",
+      "credential": "forge"
+    }
+  }
+}

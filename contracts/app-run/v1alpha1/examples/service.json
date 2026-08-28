@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "counter-preview",
+  "app": "counter@1.0.0",
+  "operation": "serve",
+  "input": {
+    "media_type": "application/json",
+    "value": {
+      "initial_value": 0
+    }
+  },
+  "deliveries": {
+    "web": {
+      "kind": "sh.barista.public-endpoint"
+    }
+  }
+}

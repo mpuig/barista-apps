@@ -158,12 +158,15 @@ class Store:
         name: Optional[str],
         metadata: Optional[dict],
         parent_session_id: Optional[str] = None,
+        *,
+        session_id: Optional[str] = None,
+        state: str = "running",
     ) -> dict:
-        sid = "sess-" + uuid.uuid4().hex[:16]
+        sid = session_id or "sess-" + uuid.uuid4().hex[:16]
         created = _now()
         self._db.execute(
             "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?)",
-            (sid, name, app, node_instance_id, "running", created,
+            (sid, name, app, node_instance_id, state, created,
              parent_session_id, json.dumps(metadata or {})),
         )
         self._db.commit()

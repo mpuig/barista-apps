@@ -21,6 +21,21 @@
       "timeout_seconds": 30
     }
   },
+  "runs": {
+    "mission": {
+      "description": "Run a validated Factory mission to a terminal result.",
+      "lifecycle": "coordinator",
+      "input": {
+        "media_type": "application/vnd.barista.factory.mission+json"
+      },
+      "outputs": {
+        "result": {
+          "kinds": ["sh.barista.artifact"],
+          "required": true
+        }
+      }
+    }
+  },
   "capabilities": {
     "optional": [
       {

@@ -1,0 +1,32 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "counter-service",
+  "version": "1.0.0",
+  "workload": {
+    "image": "ghcr.io/example/counter:1.0.0",
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "architectures": ["x86_64"],
+    "entrypoint": ["/usr/local/bin/counter"],
+    "readiness": { "type": "http", "port": 8080, "http_path": "/health" }
+  },
+  "runs": {
+    "serve": {
+      "lifecycle": "service",
+      "input": { "media_type": "application/json" },
+      "outputs": {
+        "web": {
+          "kinds": ["sh.barista.endpoint"],
+          "required": true
+        }
+      },
+      "deliveries": {
+        "web": {
+          "kinds": ["sh.barista.public-endpoint"]
+        }
+      }
+    }
+  },
+  "endpoints": [
+    { "name": "web", "protocol": "http", "port": 8080 }
+  ]
+}

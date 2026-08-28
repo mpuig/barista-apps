@@ -1,0 +1,39 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "reviewer",
+  "version": "1.0.0",
+  "workload": {
+    "image": "ghcr.io/example/reviewer:1.0.0",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/reviewer"],
+    "readiness": { "type": "none" }
+  },
+  "runs": {
+    "review": {
+      "lifecycle": "job",
+      "input": {
+        "media_type": "application/json",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "required": ["instructions"],
+          "properties": { "instructions": { "type": "string" } },
+          "additionalProperties": false
+        }
+      },
+      "bindings": {
+        "workspace": {
+          "kinds": ["sh.barista.git.repository"],
+          "required": true
+        }
+      },
+      "outputs": {
+        "report": {
+          "kinds": ["sh.barista.artifact"],
+          "required": true
+        }
+      }
+    }
+  }
+}

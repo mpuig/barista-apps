@@ -1,0 +1,47 @@
+{
+  "schema_version": "v1alpha1",
+  "run": "improve-site-11",
+  "app": "factory@0.4.2",
+  "operation": "software-change",
+  "state": "succeeded",
+  "identity": {
+    "name": "factory",
+    "version": "0.4.2",
+    "workload_digest": "sha256:44481af3d5859cca0f63d513504488057ba33a9377ad2ea23bd025905d8a4c0d",
+    "manifest_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "source": "https://github.com/acme-apps/factory.git",
+    "source_revision": "8f2c1ab"
+  },
+  "bindings": {
+    "workspace": {
+      "kind": "sh.barista.git.repository",
+      "uri": "https://github.com/acme/site.git",
+      "requested_ref": "main",
+      "resolved_identity": "f410f3413d9cbb9f4e9c4af425d05e35ec9f1d40"
+    },
+    "objective": {
+      "kind": "com.github.issue",
+      "uri": "https://github.com/acme/site/issues/11",
+      "resolved_identity": "issue-11@2026-08-28T08:00:00Z"
+    }
+  },
+  "outputs": {
+    "change": {
+      "kind": "com.github.draft-pull-request",
+      "uri": "https://github.com/acme/site/pull/12"
+    },
+    "patch": {
+      "kind": "sh.barista.artifact",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "media_type": "text/x-diff"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "sh.barista.check-receipt",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "started_at": "2026-08-28T08:00:00Z",
+  "finished_at": "2026-08-28T08:01:30Z"
+}

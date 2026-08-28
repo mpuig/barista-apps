@@ -1,0 +1,54 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "software-factory",
+  "version": "1.0.0",
+  "workload": {
+    "image": "ghcr.io/example/software-factory:1.0.0",
+    "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "architectures": ["x86_64"],
+    "entrypoint": ["/usr/local/bin/software-factory"],
+    "readiness": { "type": "none" }
+  },
+  "runs": {
+    "software-change": {
+      "lifecycle": "coordinator",
+      "input": { "media_type": "application/vnd.example.mission+json" },
+      "bindings": {
+        "workspace": {
+          "kinds": ["sh.barista.git.repository"],
+          "required": true
+        },
+        "objective": {
+          "kinds": ["com.github.issue", "sh.barista.text"],
+          "required": true
+        }
+      },
+      "outputs": {
+        "patch": {
+          "kinds": ["sh.barista.artifact"],
+          "required": true
+        },
+        "change": {
+          "kinds": ["com.github.pull-request"]
+        }
+      },
+      "deliveries": {
+        "change": {
+          "kinds": ["com.github.draft-pull-request"]
+        }
+      }
+    }
+  },
+  "permissions": {
+    "actions": [
+      "session.create",
+      { "action": "session.exec", "scope": "created_sessions" }
+    ],
+    "child_sessions": {
+      "max_concurrent": 4,
+      "max_total": 16,
+      "allow_descendants": false,
+      "actions": ["session.exec"]
+    }
+  }
+}

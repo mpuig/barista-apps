@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/app-run/v1alpha1/schema.json",
+  "title": "Barista App Run",
+  "description": "Canonical provider-neutral input envelope for one declared app operation. Media type: application/vnd.barista.app-run.v1alpha1+json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "app", "operation", "input"],
+  "properties": {
+    "schema_version": { "const": "v1alpha1" },
+    "name": { "$ref": "#/$defs/name" },
+    "app": {
+      "description": "Installed app identity or manifest locator. A locator is resolved to a validated manifest and digest-pinned workload before launch.",
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": { "$ref": "#/$defs/name" },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_type", "value"],
+      "properties": {
+        "media_type": { "$ref": "#/$defs/media_type" },
+        "value": {
+          "description": "Small immutable app-specific JSON. External or large content belongs in a binding; credential values are forbidden.",
+          "type": ["object", "array", "string", "number", "boolean", "null"]
+        }
+      }
+    },
+    "bindings": {
+      "description": "Named external resources made available to the operation.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/binding" }
+    },
+    "secrets": {
+      "description": "Local aliases to provider-resolvable references. Resolved values never enter this envelope.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/secret_reference" }
+    },
+    "deliveries": {
+      "description": "Explicitly requested outputs or external side effects.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/delivery" }
+    },
+    "metadata": {
+      "description": "Opaque, non-secret caller metadata.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "maxLength": 80
+    },
+    "kind": {
+      "description": "Namespaced binding, delivery, or output kind.",
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+      "maxLength": 214
+    },
+    "media_type": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+(?:;[^\\r\\n]+)?$"
+    },
+    "secret_reference": {
+      "type": "string",
+      "pattern": "^(secret|grant|ref|vault|env)://.+$"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/kind" },
+        "uri": { "type": "string", "minLength": 1 },
+        "ref": {
+          "description": "Requested revision. Binding resolution records the immutable resolved identity separately.",
+          "type": "string",
+          "minLength": 1
+        },
+        "credential": {
+          "description": "Name from the top-level secrets map, never a credential value.",
+          "$ref": "#/$defs/name"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/kind" },
+        "target": {
+          "description": "Optional declared destination URI. Delivery cannot infer authority to a different bound resource.",
+          "type": "string",
+          "minLength": 1
+        },
+        "credential": {
+          "description": "Name from the top-level secrets map, never a credential value.",
+          "$ref": "#/$defs/name"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

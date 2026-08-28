@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -26,7 +27,17 @@ sys.path.insert(0, str(REPO / "providers" / "local"))
 
 from mock_provider import MockProvider  # noqa: E402
 
-from barista_app_sdk import BaristaClient, Config, errors  # noqa: E402
+from barista_app_sdk import (  # noqa: E402
+    APP_RUN_ENV,
+    APP_SESSION_ID_ENV,
+    AppRun,
+    BaristaClient,
+    Config,
+    errors,
+    resolve_installed_app,
+    resolve_local_app,
+    validate_run,
+)
 from barista_app_sdk.adapters import (  # noqa: E402
     Attachment,
     FidelityReport,
@@ -37,6 +48,34 @@ from barista_app_sdk.sensitive import SecretLeak, assert_no_secret_values, redac
 
 def _minimal_manifest() -> dict:
     return json.loads((REPO / "contracts" / "app-manifest" / "v1alpha1" / "examples" / "minimal.json").read_text())
+
+
+def _job_manifest() -> dict:
+    return json.loads(
+        (REPO / "contracts" / "app-manifest" / "v1alpha1" / "examples" / "run-job.json").read_text()
+    )
+
+
+def _job_run() -> AppRun:
+    return AppRun.parse(
+        {
+            "schema_version": "v1alpha1",
+            "name": "review-website",
+            "app": "reviewer@1.0.0",
+            "operation": "review",
+            "input": {
+                "media_type": "application/json",
+                "value": {"instructions": "Review accessibility"},
+            },
+            "bindings": {
+                "workspace": {
+                    "kind": "sh.barista.git.repository",
+                    "uri": "file:///tmp/example.git",
+                    "ref": "main",
+                }
+            },
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -132,6 +171,175 @@ def test_same_app_runs_against_local_and_cloud_shaped_providers(tmp_path):
         assert result["artifact_listed"] is True
     assert local_result["paused"] is True  # fake node supports pause/resume
     assert cloud_result["paused"] is True   # cloud-shaped advertises it too
+
+
+def test_app_run_is_deeply_immutable_and_canonical():
+    run = _job_run()
+    with pytest.raises(TypeError):
+        run.input_value["instructions"] = "replace validated input"  # type: ignore[index]
+    reparsed = AppRun.parse(dict(reversed(list(run.to_document().items()))))
+    assert run.canonical_bytes() == reparsed.canonical_bytes()
+    assert run.content_id() == reparsed.content_id()
+
+
+def test_app_run_validation_refuses_undeclared_input_before_transport():
+    mock = MockProvider(name="untouched")
+    document = _job_run().to_document()
+    document["deliveries"] = {"change": {"kind": "com.github.draft-pull-request"}}
+    run = AppRun.parse(document)
+
+    with BaristaClient(Config(endpoint="http://untouched.invalid"), transport=mock.transport()) as client:
+        with pytest.raises(errors.InvalidRequestError) as caught:
+            client.launch_app_run(run, _job_manifest())
+
+    assert caught.value.details["undeclared_deliveries"] == ["change"]
+    assert mock.apps == {}
+    assert mock.sessions == {}
+
+
+def test_app_run_validation_refuses_undeclared_binding_before_transport():
+    mock = MockProvider(name="untouched")
+    document = _job_run().to_document()
+    document["bindings"]["objective"] = {
+        "kind": "com.github.issue",
+        "uri": "https://github.com/acme/site/issues/11",
+    }
+    run = AppRun.parse(document)
+
+    with BaristaClient(Config(endpoint="http://untouched.invalid"), transport=mock.transport()) as client:
+        with pytest.raises(errors.InvalidRequestError) as caught:
+            client.launch_app_run(run, _job_manifest())
+
+    assert caught.value.details["undeclared_bindings"] == ["objective"]
+    assert mock.apps == {}
+    assert mock.sessions == {}
+
+
+def test_app_run_embedded_input_schema_is_checked_before_transport():
+    mock = MockProvider(name="untouched")
+    document = _job_run().to_document()
+    document["input"]["value"] = {}
+    run = AppRun.parse(document)
+
+    with BaristaClient(Config(endpoint="http://untouched.invalid"), transport=mock.transport()) as client:
+        with pytest.raises(errors.InvalidRequestError, match="instructions"):
+            client.launch_app_run(run, _job_manifest())
+
+    assert mock.apps == {}
+    assert mock.sessions == {}
+
+
+def test_app_run_missing_credential_alias_is_rejected():
+    document = _job_run().to_document()
+    document["bindings"]["workspace"]["credential"] = "forge"
+    with pytest.raises(errors.InvalidRequestError) as caught:
+        AppRun.parse(document)
+    assert caught.value.details["missing_secret_aliases"] == ["forge"]
+
+
+def test_launch_app_run_delivers_exact_canonical_envelope_and_is_idempotent():
+    mock = MockProvider(name="runs")
+    run = _job_run()
+    manifest = _job_manifest()
+
+    with BaristaClient(Config(endpoint="http://runs.invalid"), transport=mock.transport()) as client:
+        first, operation = client.launch_app_run(run, manifest)
+        second, replayed_operation = client.launch_app_run(run, manifest)
+
+    assert first.id == second.id
+    assert len(mock.sessions) == 1
+    assert operation == replayed_operation
+    assert operation.lifecycle == "job"
+    assert mock.session_env[first.id][APP_RUN_ENV].encode() == run.canonical_bytes()
+    assert mock.session_env[first.id][APP_SESSION_ID_ENV] == first.id
+    run_meta = first.raw.get("metadata", {}).get("sh.barista.app-run")
+    # The mock provider intentionally projects only public Session fields, so
+    # provenance is asserted at the launch environment here and in HTTP contract
+    # tests when metadata preservation lands in providers.
+    assert run_meta is None
+
+
+def test_local_app_resolution_records_a_clean_exact_git_revision(tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    manifest = _job_manifest()
+    (app_dir / "manifest.json").write_text(json.dumps(manifest))
+    subprocess.run(["git", "init", "-q", str(app_dir)], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "add", "manifest.json"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "commit", "-qm", "app"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(app_dir), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    resolved = resolve_local_app(app_dir)
+
+    assert resolved.name == manifest["name"]
+    assert resolved.version == manifest["version"]
+    assert resolved.workload_digest == manifest["workload"]["digest"]
+    assert resolved.source_revision == head
+    assert resolved.source.startswith("git+file://")
+    assert resolved.manifest_document() == manifest
+    with pytest.raises(TypeError):
+        resolved.manifest["name"] = "changed"  # type: ignore[index]
+
+
+def test_dirty_local_app_source_requires_explicit_development_mode(tmp_path):
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    manifest_path = app_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(_job_manifest()))
+    subprocess.run(["git", "init", "-q", str(app_dir)], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "add", "manifest.json"], check=True)
+    subprocess.run(["git", "-C", str(app_dir), "commit", "-qm", "app"], check=True)
+    manifest_path.write_text(json.dumps(_job_manifest(), indent=2) + "\n")
+
+    with pytest.raises(errors.InvalidRequestError) as caught:
+        resolve_local_app(app_dir)
+    assert caught.value.code == "app_source.dirty"
+
+    development = resolve_local_app(app_dir, allow_dirty=True)
+    assert "+dirty:sha256:" in development.source_revision
+
+
+def test_installed_app_resolution_checks_the_requested_version():
+    mock = MockProvider(name="installed-app")
+    manifest = _job_manifest()
+    with BaristaClient(Config(endpoint="http://installed.invalid"), transport=mock.transport()) as client:
+        client.install_app(manifest)
+        resolved = resolve_installed_app(client, "reviewer@1.0.0")
+        with pytest.raises(errors.InvalidRequestError) as caught:
+            resolve_installed_app(client, "reviewer@9.0.0")
+
+    assert resolved.installed is True
+    assert resolved.reference == "reviewer@1.0.0"
+    assert resolved.source == "installed://reviewer"
+    assert resolved.source_revision == resolved.manifest_digest
+    assert caught.value.code == "app_source.version_mismatch"
+
+
+def test_sdk_retrieves_an_installed_app_manifest_for_run_validation():
+    mock = MockProvider(name="installed-app")
+    manifest = _job_manifest()
+    with BaristaClient(Config(endpoint="http://installed.invalid"), transport=mock.transport()) as client:
+        client.install_app(manifest)
+        installed = client.get_installed_app("reviewer")
+        operation = validate_run(_job_run(), installed.manifest)
+
+    assert installed.name == "reviewer"
+    assert installed.digest == manifest["workload"]["digest"]
+    assert operation.lifecycle == "job"
+
+
+def test_app_run_manifest_without_typed_operation_is_not_guessed():
+    with pytest.raises(errors.InvalidRequestError, match="does not declare"):
+        validate_run(_job_run(), _minimal_manifest())
 
 
 def test_idempotent_ensure_survives_lost_response():

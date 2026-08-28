@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import httpx
 
 BASE = "/v1alpha1"
+APP_SESSION_ID_ENV = "BARISTA_APP_SESSION_ID"
 REPO = Path(__file__).resolve().parents[2]
 DELEGATED = "grants.delegated"
 
@@ -404,7 +405,9 @@ class MockProvider:
         env: Optional[dict] = None,
     ) -> str:
         sid = "sess-" + uuid.uuid4().hex[:12]
-        self.session_env[sid] = {str(k): str(v) for k, v in (env or {}).items()}
+        supplied_env = {str(k): str(v) for k, v in (env or {}).items()}
+        supplied_env[APP_SESSION_ID_ENV] = sid
+        self.session_env[sid] = supplied_env
         session = {
             "id": sid,
             "app": app,
@@ -496,8 +499,33 @@ class MockProvider:
                 },
             )
 
+        m = re.match(rf"^{BASE}/apps/([^/]+)$", path)
+        if m and method == "GET":
+            name = m.group(1)
+            manifest = self.apps.get(name)
+            if manifest is None:
+                return self._error(404, "terminal", "not_found", f"app '{name}' is not installed")
+            return self._json(
+                200,
+                {
+                    "name": manifest["name"],
+                    "version": manifest["version"],
+                    "digest": manifest["workload"]["digest"],
+                    "granted_capabilities": self.capabilities,
+                    "installed_at": "2026-08-17T00:00:00Z",
+                    "manifest": manifest,
+                },
+            )
+
         if path == f"{BASE}/sessions" and method == "POST":
             body = json.loads(request.content)
+            if APP_SESSION_ID_ENV in (body.get("env") or {}):
+                return self._error(
+                    422,
+                    "invalid_request",
+                    "session.reserved_env",
+                    f"environment variable {APP_SESSION_ID_ENV} is provider-reserved",
+                )
             if idem and idem in self.idem_sessions:
                 sid = self.idem_sessions[idem]
                 return self._json(200, self.sessions[sid])

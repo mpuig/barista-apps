@@ -76,6 +76,31 @@ paths:
         "422":
           $ref: "#/components/responses/Error"
 
+  /v1alpha1/apps/{appName}:
+    parameters:
+      - name: appName
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [apps]
+      operationId: getInstalledApp
+      summary: Retrieve an installed app's identity and validated manifest.
+      description: >
+        Lets a portable runner select and validate a declared run operation by
+        app name without reinstalling it or relying on a provider-specific
+        catalog. The manifest contains secret references only; resolved values
+        are never returned.
+      responses:
+        "200":
+          description: Installed app and the manifest validated at installation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstalledApp"
+        "404":
+          $ref: "#/components/responses/Error"
+
   /v1alpha1/sessions:
     get:
       tags: [sessions]
@@ -514,6 +539,21 @@ components:
           items: { $ref: "#/components/schemas/CapabilityId" }
         installed_at: { type: string, format: date-time }
 
+    InstalledApp:
+      type: object
+      additionalProperties: false
+      required: [name, version, digest, installed_at, manifest]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        digest: { type: string }
+        granted_capabilities:
+          type: array
+          items: { $ref: "#/components/schemas/CapabilityId" }
+        installed_at: { type: string, format: date-time }
+        manifest:
+          $ref: "#/components/schemas/AppManifestRef"
+
     EnsureSessionRequest:
       type: object
       additionalProperties: false
@@ -529,7 +569,11 @@ components:
           type: array
           items: { type: string }
         env:
-          description: Non-secret environment. Secret values are never accepted here.
+          description: >
+            Non-secret caller environment. Secret values are never accepted
+            here. `BARISTA_APP_SESSION_ID` is provider-reserved: callers cannot
+            set it, and the provider injects the allocated opaque session handle
+            before starting the workload.
           type: object
           additionalProperties: { type: string }
         metadata:

@@ -18,7 +18,8 @@ import httpx
 from . import errors
 from .attach import AttachFrame
 from .config import Config
-from .models import Artifact, Discovery, Event, ExecHandle, Grant, Operation, Session
+from .models import Artifact, Discovery, Event, ExecHandle, Grant, InstalledApp, Operation, Session
+from .runs import APP_RUN_ENV, APP_SESSION_ID_ENV, AppRun, RunOperation, validate_run
 
 BASE = "/v1alpha1"
 MANIFEST_MEDIA_TYPE = "application/vnd.barista.app-manifest.v1alpha1+json"
@@ -153,6 +154,65 @@ class BaristaClient:
             expected=(201,),
         )
         return resp.json()
+
+    def get_installed_app(self, name: str) -> InstalledApp:
+        resp = self._request("GET", f"{BASE}/apps/{name}", expected=(200,))
+        return InstalledApp.parse(resp.json())
+
+    def launch_app_run(
+        self,
+        run: AppRun,
+        manifest: dict,
+        *,
+        install: bool = True,
+        env: Optional[dict[str, str]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> tuple[Session, RunOperation]:
+        """Validate and launch one typed App Run in an owning session.
+
+        Validation is deliberately first: an undeclared binding, delivery, or
+        invalid embedded input cannot leave an installed app or session behind.
+        The run's content id supplies stable keys when the caller does not, so a
+        process-level retry converges on the same installation and session.
+        """
+        operation = validate_run(run, manifest)
+        launch_env = dict(env or {})
+        reserved = {APP_RUN_ENV, APP_SESSION_ID_ENV}
+        collisions = sorted(reserved.intersection(launch_env))
+        if collisions:
+            raise errors.InvalidRequestError(
+                f"reserved App Run environment cannot be overridden: {', '.join(collisions)}",
+                code="app_run.reserved_env",
+                details={"reserved": collisions},
+                error_class="invalid_request",
+            )
+
+        key = idempotency_key or "app-run-" + run.content_id().split(":", 1)[1]
+        session_key = key + "-session"
+        launch_env[APP_RUN_ENV] = run.canonical_bytes().decode("utf-8")
+
+        required = [
+            item["capability"]
+            for item in manifest.get("capabilities", {}).get("required", [])
+        ]
+        self.negotiate(required=required)
+
+        if install:
+            self.install_app(manifest, idempotency_key=key + "-install")
+        session = self.ensure_session(
+            manifest["name"],
+            name=run.name,
+            env=launch_env,
+            metadata={
+                "sh.barista.app-run": {
+                    "content_id": run.content_id(),
+                    "operation": run.operation,
+                    "lifecycle": operation.lifecycle,
+                }
+            },
+            idempotency_key=session_key,
+        )
+        return session, operation
 
     # -- sessions --------------------------------------------------------- #
     def ensure_session(

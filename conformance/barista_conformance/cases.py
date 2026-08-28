@@ -191,6 +191,29 @@ def manifest_rejection(client, config, advertised):
     return ok("core.manifest_rejection", CORE, "mutable-tag/no-digest manifest rejected before side effects")
 
 
+@case("core.installed_app_manifest_read")
+def installed_app_manifest_read(client, config, advertised):
+    manifest = config.probe_workload.manifest()
+    installed = client.install_app(manifest, key=new_idempotency_key())
+    assert installed.status_code == 201, f"install returned {installed.status_code}: {installed.text}"
+
+    fetched = client.get_installed_app(manifest["name"])
+    assert fetched.status_code == 200, f"get installed app returned {fetched.status_code}: {fetched.text}"
+    body = fetched.json()
+    schemas.assert_valid(schemas.component_validator("InstalledApp"), body, "InstalledApp")
+    assert body["manifest"] == manifest, "provider did not return the manifest it validated"
+    assert body["digest"] == manifest["workload"]["digest"]
+
+    missing = client.get_installed_app("not-installed-" + new_idempotency_key())
+    assert missing.status_code == 404, f"unknown app returned {missing.status_code}, not 404"
+    schemas.assert_valid(schemas.component_validator("Error"), missing.json(), "Error")
+    return ok(
+        "core.installed_app_manifest_read",
+        CORE,
+        "installed manifest is retrievable by name; unknown app is 404",
+    )
+
+
 @case("core.ensure_and_get")
 def ensure_and_get(client, config, advertised):
     sid = _ensure_a_session(client, config)
@@ -219,6 +242,39 @@ def ensure_idempotent(client, config, advertised):
     assert id1 == id2, f"idempotent ensure returned two sessions: {id1} != {id2}"
     client.delete_session(id1, key=new_idempotency_key())
     return ok("core.ensure_idempotent", CORE, "replayed ensure returned the same session")
+
+
+@case("core.session_self_id_is_reserved")
+def session_self_id_is_reserved(client, config, advertised):
+    manifest = config.probe_workload.manifest()
+    installed = client.install_app(manifest, key=new_idempotency_key())
+    assert installed.status_code == 201, installed.text
+    before = client.list_sessions(app=manifest["name"])
+    assert before.status_code == 200, before.text
+    before_ids = {item["id"] for item in before.json().get("items", [])}
+
+    forged = client.ensure_session(
+        {
+            "app": manifest["name"],
+            "name": "forged-self-id-" + new_idempotency_key(),
+            "env": {"BARISTA_APP_SESSION_ID": "session-chosen-by-caller"},
+        },
+        key=new_idempotency_key(),
+    )
+    assert forged.status_code == 422, (
+        f"caller-supplied BARISTA_APP_SESSION_ID returned {forged.status_code}: {forged.text}"
+    )
+    schemas.assert_valid(schemas.component_validator("Error"), forged.json(), "Error")
+
+    after = client.list_sessions(app=manifest["name"])
+    assert after.status_code == 200, after.text
+    after_ids = {item["id"] for item in after.json().get("items", [])}
+    assert after_ids == before_ids, "refused reserved environment created a session"
+    return ok(
+        "core.session_self_id_is_reserved",
+        CORE,
+        "caller cannot forge provider-injected owning-session handle",
+    )
 
 
 @case("core.exec")

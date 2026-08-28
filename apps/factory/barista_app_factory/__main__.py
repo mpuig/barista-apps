@@ -11,7 +11,14 @@ import json
 import os
 import sys
 
-from barista_app_sdk import BaristaClient, Config
+from barista_app_sdk import (
+    APP_RUN_ENV,
+    APP_SESSION_ID_ENV,
+    AppRun,
+    BaristaClient,
+    Config,
+    errors,
+)
 
 from .coordinator import Coordinator
 from .mission import Mission
@@ -41,6 +48,49 @@ def exit_code_for(state) -> int:
 #: file that nothing has written yet. The environment is the one channel that
 #: carries both the credential and the work, set together at session create.
 MISSION_ENV = "BARISTA_FACTORY_MISSION"
+FACTORY_RUN_OPERATION = "mission"
+FACTORY_MISSION_MEDIA_TYPE = "application/vnd.barista.factory.mission+json"
+
+
+def _map_app_run_to_mission() -> str | None:
+    """Adapt the shared run envelope to Factory's established bootstrap.
+
+    `$BARISTA_FACTORY_MISSION` remains the canonical in-session mission
+    mechanism. The generic runner sets `$BARISTA_APP_RUN`; this adapter validates
+    the Factory-facing portion and writes the mission variable before the
+    coordinator is constructed. Nothing silently changes an explicitly supplied
+    path or an already supplied mission.
+    """
+    raw = os.environ.get(APP_RUN_ENV)
+    if not raw:
+        return None
+    try:
+        document = json.loads(raw)
+        run = AppRun.parse(document)
+    except (json.JSONDecodeError, errors.InvalidRequestError, TypeError, ValueError) as exc:
+        # Keep startup output concise instead of turning invalid user input into
+        # a provider-level guest-unreachable symptom.
+        raise SystemExit(f"${APP_RUN_ENV} is not a valid App Run: {exc}") from exc
+
+    if run.operation != FACTORY_RUN_OPERATION:
+        raise SystemExit(
+            f"${APP_RUN_ENV} selects operation {run.operation!r}; "
+            f"Factory supports {FACTORY_RUN_OPERATION!r}"
+        )
+    if run.input_media_type != FACTORY_MISSION_MEDIA_TYPE:
+        raise SystemExit(
+            f"${APP_RUN_ENV} input media type must be {FACTORY_MISSION_MEDIA_TYPE}"
+        )
+    if run.bindings or run.secrets or run.deliveries:
+        raise SystemExit(
+            f"Factory operation {FACTORY_RUN_OPERATION!r} does not accept bindings, "
+            "run secrets, or deliveries"
+        )
+
+    mission = run.to_document()["input"]["value"]
+    encoded = json.dumps(mission, sort_keys=True, separators=(",", ":"))
+    os.environ[MISSION_ENV] = encoded
+    return encoded
 
 
 def _load_mission(path: str | None) -> Mission:
@@ -54,6 +104,8 @@ def _load_mission(path: str | None) -> Mission:
     if path:
         return Mission.load_file(path)
     raw = os.environ.get(MISSION_ENV)
+    if not raw:
+        raw = _map_app_run_to_mission()
     if not raw:
         raise SystemExit(
             f"no mission: pass a path, or set ${MISSION_ENV} to the mission JSON"
@@ -99,7 +151,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print("coordinator ready", flush=True)  # readiness log line (see manifest)
     with BaristaClient(config) as client:
-        coordinator = Coordinator(client, mission, args.state)
+        coordinator = Coordinator(
+            client,
+            mission,
+            args.state,
+            coordinator_session_id=os.environ.get(APP_SESSION_ID_ENV),
+        )
         state = coordinator.run()
 
     summary = state.summary()
