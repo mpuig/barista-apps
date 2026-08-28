@@ -70,9 +70,29 @@ def _operation(manifest: dict, requested: str | None) -> RunOperation:
     return RunOperation.from_manifest(manifest, requested)
 
 
-def _default_name(app: str, operation: str, input_value: Any, bindings: dict) -> str:
+def _default_name(
+    app: str,
+    operation: str,
+    input_media_type: str,
+    input_value: Any,
+    bindings: dict,
+    secrets: dict,
+    deliveries: dict,
+    app_source: dict,
+) -> str:
+    # Include every launch-significant field except the name itself. In
+    # particular, changing an explicit delivery must never resolve to a session
+    # that was launched without that side effect request.
     seed = canonical_bytes(
-        {"app": app, "operation": operation, "input": input_value, "bindings": bindings}
+        {
+            "app": app,
+            "operation": operation,
+            "input": {"media_type": input_media_type, "value": input_value},
+            "bindings": bindings,
+            "secrets": secrets,
+            "deliveries": deliveries,
+            "app_source": app_source,
+        }
     )
     suffix = hashlib.sha256(seed).hexdigest()[:12]
     base = f"{app.split('@', 1)[0]}-{operation}".lower()
@@ -108,8 +128,24 @@ def _run(args) -> int:
         resolved = resolve_app(client, args.app, allow_dirty=args.development)
         manifest = resolved.manifest_document()
         operation = _operation(manifest, args.operation)
+        input_media_type = args.input_media_type or operation.input_media_type
+        app_source = {
+            "name": resolved.name,
+            "version": resolved.version,
+            "source": resolved.source,
+            "source_revision": resolved.source_revision,
+            "manifest_digest": resolved.manifest_digest,
+            "workload_digest": resolved.workload_digest,
+        }
         name = args.name or _default_name(
-            resolved.reference, operation.name, input_value, bindings
+            resolved.reference,
+            operation.name,
+            input_media_type,
+            input_value,
+            bindings,
+            secrets,
+            deliveries,
+            app_source,
         )
         run = AppRun.parse(
             {
@@ -118,21 +154,14 @@ def _run(args) -> int:
                 "app": resolved.reference,
                 "operation": operation.name,
                 "input": {
-                    "media_type": args.input_media_type or operation.input_media_type,
+                    "media_type": input_media_type,
                     "value": input_value,
                 },
                 "bindings": bindings,
                 "secrets": secrets,
                 "deliveries": deliveries,
                 "metadata": {
-                    "sh.barista.app-source": {
-                        "name": resolved.name,
-                        "version": resolved.version,
-                        "source": resolved.source,
-                        "source_revision": resolved.source_revision,
-                        "manifest_digest": resolved.manifest_digest,
-                        "workload_digest": resolved.workload_digest,
-                    }
+                    "sh.barista.app-source": app_source
                 },
             }
         )

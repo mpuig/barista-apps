@@ -118,6 +118,31 @@ def test_cli_refuses_cleanup_with_detach_before_provider_access(tmp_path, monkey
     assert "cannot be combined" in capsys.readouterr().err
 
 
+def test_default_name_changes_when_delivery_request_changes():
+    common = (
+        "reviewer@1.0.0",
+        "review",
+        "application/json",
+        {"instructions": "review"},
+        {},
+        {},
+    )
+    source = {
+        "name": "reviewer",
+        "version": "1.0.0",
+        "workload_digest": "sha256:" + "12" * 32,
+    }
+
+    local_only = cli._default_name(*common, {}, source)
+    publish = cli._default_name(
+        *common,
+        {"change": {"kind": "com.github.draft-pull-request"}},
+        source,
+    )
+
+    assert local_only != publish
+
+
 def test_named_bindings_refuse_duplicates_without_echoing_values():
     with pytest.raises(ValueError, match="duplicate binding name"):
         cli._named_json(
