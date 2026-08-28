@@ -82,6 +82,9 @@ class HostAPIClient:
             headers={"content-type": MANIFEST_MEDIA_TYPE, **self._idem(key)},
         )
 
+    def get_installed_app(self, name: str) -> httpx.Response:
+        return self._client.get(f"{BASE}/apps/{name}")
+
     # -- sessions --------------------------------------------------------- #
     def ensure_session(self, body: dict, key: Optional[str] = None) -> httpx.Response:
         return self._client.post(f"{BASE}/sessions", json=body, headers=self._idem(key))

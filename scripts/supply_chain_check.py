@@ -89,6 +89,8 @@ def check_schema_determinism() -> None:
         return "sha256:" + hashlib.sha256(blob).hexdigest()
 
     for name in ("app-manifest/v1alpha1/schema.json",
+                 "app-run/v1alpha1/schema.json",
+                 "app-run/v1alpha1/result.schema.json",
                  "host-api/v1alpha1/streaming/event.schema.json",
                  "session-story/v1alpha1/schema.json"):
         path = REPO / "contracts" / name

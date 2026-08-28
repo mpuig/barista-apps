@@ -115,6 +115,25 @@ class LocalProvider:
             status_code=201,
         )
 
+    async def get_installed_app(self, request: Request) -> Response:
+        name = request.path_params["appName"]
+        rec = self.store.get_app(name)
+        if rec is None:
+            return errors.not_found(f"app '{name}' is not installed")
+        # The store contains the validated manifest and reference-only secret
+        # declarations. Provider-resolved values are never stored in it and
+        # therefore cannot leak through this read surface.
+        return JSONResponse(
+            {
+                "name": rec["name"],
+                "version": rec["version"],
+                "digest": rec["digest"],
+                "granted_capabilities": json.loads(rec["granted_capabilities"]),
+                "installed_at": rec["installed_at"],
+                "manifest": json.loads(rec["manifest"]),
+            }
+        )
+
     def _advertised_for(self, manifest: dict) -> list[str]:
         required = [c["capability"] for c in manifest.get("capabilities", {}).get("required", [])]
         optional = [c["capability"] for c in manifest.get("capabilities", {}).get("optional", [])]
@@ -341,6 +360,7 @@ def build_app(node: NodeClient, store: Store, *, token: Optional[str] = None) ->
     routes = [
         Route(f"{base}/discovery", p.discovery, methods=["GET"]),
         Route(f"{base}/apps", p.install_app, methods=["POST"]),
+        Route(f"{base}/apps/{{appName}}", p.get_installed_app, methods=["GET"]),
         Route(f"{base}/sessions", p.ensure_session, methods=["POST"]),
         Route(f"{base}/sessions", p.list_sessions, methods=["GET"]),
         Route(f"{base}/sessions/{{sessionId}}", p.get_session, methods=["GET"]),

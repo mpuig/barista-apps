@@ -496,6 +496,24 @@ class MockProvider:
                 },
             )
 
+        m = re.match(rf"^{BASE}/apps/([^/]+)$", path)
+        if m and method == "GET":
+            name = m.group(1)
+            manifest = self.apps.get(name)
+            if manifest is None:
+                return self._error(404, "terminal", "not_found", f"app '{name}' is not installed")
+            return self._json(
+                200,
+                {
+                    "name": manifest["name"],
+                    "version": manifest["version"],
+                    "digest": manifest["workload"]["digest"],
+                    "granted_capabilities": self.capabilities,
+                    "installed_at": "2026-08-17T00:00:00Z",
+                    "manifest": manifest,
+                },
+            )
+
         if path == f"{BASE}/sessions" and method == "POST":
             body = json.loads(request.content)
             if idem and idem in self.idem_sessions:

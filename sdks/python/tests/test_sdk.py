@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO / "providers" / "local"))
 
 from mock_provider import MockProvider  # noqa: E402
 
-from barista_app_sdk import BaristaClient, Config, errors  # noqa: E402
+from barista_app_sdk import APP_RUN_ENV, AppRun, BaristaClient, Config, errors, validate_run  # noqa: E402
 from barista_app_sdk.adapters import (  # noqa: E402
     Attachment,
     FidelityReport,
@@ -37,6 +37,34 @@ from barista_app_sdk.sensitive import SecretLeak, assert_no_secret_values, redac
 
 def _minimal_manifest() -> dict:
     return json.loads((REPO / "contracts" / "app-manifest" / "v1alpha1" / "examples" / "minimal.json").read_text())
+
+
+def _job_manifest() -> dict:
+    return json.loads(
+        (REPO / "contracts" / "app-manifest" / "v1alpha1" / "examples" / "run-job.json").read_text()
+    )
+
+
+def _job_run() -> AppRun:
+    return AppRun.parse(
+        {
+            "schema_version": "v1alpha1",
+            "name": "review-website",
+            "app": "reviewer@1.0.0",
+            "operation": "review",
+            "input": {
+                "media_type": "application/json",
+                "value": {"instructions": "Review accessibility"},
+            },
+            "bindings": {
+                "workspace": {
+                    "kind": "sh.barista.git.repository",
+                    "uri": "file:///tmp/example.git",
+                    "ref": "main",
+                }
+            },
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -132,6 +160,109 @@ def test_same_app_runs_against_local_and_cloud_shaped_providers(tmp_path):
         assert result["artifact_listed"] is True
     assert local_result["paused"] is True  # fake node supports pause/resume
     assert cloud_result["paused"] is True   # cloud-shaped advertises it too
+
+
+def test_app_run_is_deeply_immutable_and_canonical():
+    run = _job_run()
+    with pytest.raises(TypeError):
+        run.input_value["instructions"] = "replace validated input"  # type: ignore[index]
+    reparsed = AppRun.parse(dict(reversed(list(run.to_document().items()))))
+    assert run.canonical_bytes() == reparsed.canonical_bytes()
+    assert run.content_id() == reparsed.content_id()
+
+
+def test_app_run_validation_refuses_undeclared_input_before_transport():
+    mock = MockProvider(name="untouched")
+    document = _job_run().to_document()
+    document["deliveries"] = {"change": {"kind": "com.github.draft-pull-request"}}
+    run = AppRun.parse(document)
+
+    with BaristaClient(Config(endpoint="http://untouched.invalid"), transport=mock.transport()) as client:
+        with pytest.raises(errors.InvalidRequestError) as caught:
+            client.launch_app_run(run, _job_manifest())
+
+    assert caught.value.details["undeclared_deliveries"] == ["change"]
+    assert mock.apps == {}
+    assert mock.sessions == {}
+
+
+def test_app_run_validation_refuses_undeclared_binding_before_transport():
+    mock = MockProvider(name="untouched")
+    document = _job_run().to_document()
+    document["bindings"]["objective"] = {
+        "kind": "com.github.issue",
+        "uri": "https://github.com/acme/site/issues/11",
+    }
+    run = AppRun.parse(document)
+
+    with BaristaClient(Config(endpoint="http://untouched.invalid"), transport=mock.transport()) as client:
+        with pytest.raises(errors.InvalidRequestError) as caught:
+            client.launch_app_run(run, _job_manifest())
+
+    assert caught.value.details["undeclared_bindings"] == ["objective"]
+    assert mock.apps == {}
+    assert mock.sessions == {}
+
+
+def test_app_run_embedded_input_schema_is_checked_before_transport():
+    mock = MockProvider(name="untouched")
+    document = _job_run().to_document()
+    document["input"]["value"] = {}
+    run = AppRun.parse(document)
+
+    with BaristaClient(Config(endpoint="http://untouched.invalid"), transport=mock.transport()) as client:
+        with pytest.raises(errors.InvalidRequestError, match="instructions"):
+            client.launch_app_run(run, _job_manifest())
+
+    assert mock.apps == {}
+    assert mock.sessions == {}
+
+
+def test_app_run_missing_credential_alias_is_rejected():
+    document = _job_run().to_document()
+    document["bindings"]["workspace"]["credential"] = "forge"
+    with pytest.raises(errors.InvalidRequestError) as caught:
+        AppRun.parse(document)
+    assert caught.value.details["missing_secret_aliases"] == ["forge"]
+
+
+def test_launch_app_run_delivers_exact_canonical_envelope_and_is_idempotent():
+    mock = MockProvider(name="runs")
+    run = _job_run()
+    manifest = _job_manifest()
+
+    with BaristaClient(Config(endpoint="http://runs.invalid"), transport=mock.transport()) as client:
+        first, operation = client.launch_app_run(run, manifest)
+        second, replayed_operation = client.launch_app_run(run, manifest)
+
+    assert first.id == second.id
+    assert len(mock.sessions) == 1
+    assert operation == replayed_operation
+    assert operation.lifecycle == "job"
+    assert mock.session_env[first.id][APP_RUN_ENV].encode() == run.canonical_bytes()
+    run_meta = first.raw.get("metadata", {}).get("sh.barista.app-run")
+    # The mock provider intentionally projects only public Session fields, so
+    # provenance is asserted at the launch environment here and in HTTP contract
+    # tests when metadata preservation lands in providers.
+    assert run_meta is None
+
+
+def test_sdk_retrieves_an_installed_app_manifest_for_run_validation():
+    mock = MockProvider(name="installed-app")
+    manifest = _job_manifest()
+    with BaristaClient(Config(endpoint="http://installed.invalid"), transport=mock.transport()) as client:
+        client.install_app(manifest)
+        installed = client.get_installed_app("reviewer")
+        operation = validate_run(_job_run(), installed.manifest)
+
+    assert installed.name == "reviewer"
+    assert installed.digest == manifest["workload"]["digest"]
+    assert operation.lifecycle == "job"
+
+
+def test_app_run_manifest_without_typed_operation_is_not_guessed():
+    with pytest.raises(errors.InvalidRequestError, match="does not declare"):
+        validate_run(_job_run(), _minimal_manifest())
 
 
 def test_idempotent_ensure_survives_lost_response():

@@ -36,6 +36,13 @@
     "workload": {
       "$ref": "#/$defs/workload"
     },
+    "runs": {
+      "description": "Optional typed operations exposed through the portable App Run contract. A manifest without this map keeps its direct session-launch behavior but declares no typed run operation.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/run_name" },
+      "additionalProperties": { "$ref": "#/$defs/run_operation" }
+    },
     "endpoints": {
       "description": "Optional service endpoints the workload exposes.",
       "type": "array",
@@ -144,6 +151,90 @@
           "type": "integer",
           "minimum": 1,
           "default": 60
+        }
+      }
+    },
+    "run_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "maxLength": 80
+    },
+    "run_kind": {
+      "description": "Namespaced binding, output, or delivery kind. Providers preserve it without interpreting app-specific semantics.",
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+      "maxLength": 214
+    },
+    "run_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds"],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/run_kind" }
+        },
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string", "maxLength": 1024 }
+      }
+    },
+    "delivery_slot": {
+      "description": "A delivery the caller may explicitly request. Deliveries cannot be required merely by selecting an operation because they may have external side effects.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds"],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/run_kind" }
+        },
+        "description": { "type": "string", "maxLength": 1024 }
+      }
+    },
+    "run_operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "input"],
+      "properties": {
+        "description": { "type": "string", "maxLength": 1024 },
+        "lifecycle": {
+          "type": "string",
+          "enum": ["job", "service", "interactive", "coordinator"]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["media_type"],
+          "properties": {
+            "media_type": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+(?:;[^\\r\\n]+)?$"
+            },
+            "schema": {
+              "description": "Optional inline Draft 2020-12 schema evaluated by the runner before any mutation.",
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/run_name" },
+          "additionalProperties": { "$ref": "#/$defs/run_slot" }
+        },
+        "outputs": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/run_name" },
+          "additionalProperties": { "$ref": "#/$defs/run_slot" }
+        },
+        "deliveries": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/run_name" },
+          "additionalProperties": { "$ref": "#/$defs/delivery_slot" }
         }
       }
     },

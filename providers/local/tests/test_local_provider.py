@@ -183,6 +183,39 @@ def test_manifest_without_digest_is_rejected(tmp_path):
         node.close()
 
 
+def test_installed_app_manifest_can_be_read_without_resolved_secrets(tmp_path):
+    import httpx
+
+    app, store, node = create_local_app(tmp_path / "data")
+    port = _free_port()
+    manifest = _minimal_manifest()
+    manifest["permissions"] = {
+        "secrets": [{"name": "MODEL_API_KEY", "ref": "secret://model/api-key"}]
+    }
+    try:
+        with _ServerThread(app, port):
+            base = f"http://127.0.0.1:{port}/v1alpha1"
+            installed = httpx.post(
+                f"{base}/apps",
+                content=json.dumps(manifest),
+                headers={"content-type": "application/vnd.barista.app-manifest.v1alpha1+json"},
+            )
+            assert installed.status_code == 201
+
+            fetched = httpx.get(f"{base}/apps/{manifest['name']}")
+            assert fetched.status_code == 200
+            body = fetched.json()
+            assert body["digest"] == manifest["workload"]["digest"]
+            assert body["manifest"] == manifest
+            assert body["manifest"]["permissions"]["secrets"] == [
+                {"name": "MODEL_API_KEY", "ref": "secret://model/api-key"}
+            ]
+            assert httpx.get(f"{base}/apps/not-installed").status_code == 404
+    finally:
+        store.close()
+        node.close()
+
+
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #

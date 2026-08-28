@@ -30,6 +30,27 @@ class Discovery:
         return capability in self.capabilities
 
 
+@dataclass(frozen=True)
+class InstalledApp:
+    name: str
+    version: str
+    digest: str
+    installed_at: str
+    manifest: dict
+    granted_capabilities: tuple[str, ...] = ()
+
+    @classmethod
+    def parse(cls, d: dict) -> "InstalledApp":
+        return cls(
+            name=d["name"],
+            version=d["version"],
+            digest=d["digest"],
+            installed_at=d["installed_at"],
+            manifest=d["manifest"],
+            granted_capabilities=tuple(d.get("granted_capabilities", ())),
+        )
+
+
 @dataclass
 class Session:
     id: str

@@ -191,6 +191,29 @@ def manifest_rejection(client, config, advertised):
     return ok("core.manifest_rejection", CORE, "mutable-tag/no-digest manifest rejected before side effects")
 
 
+@case("core.installed_app_manifest_read")
+def installed_app_manifest_read(client, config, advertised):
+    manifest = config.probe_workload.manifest()
+    installed = client.install_app(manifest, key=new_idempotency_key())
+    assert installed.status_code == 201, f"install returned {installed.status_code}: {installed.text}"
+
+    fetched = client.get_installed_app(manifest["name"])
+    assert fetched.status_code == 200, f"get installed app returned {fetched.status_code}: {fetched.text}"
+    body = fetched.json()
+    schemas.assert_valid(schemas.component_validator("InstalledApp"), body, "InstalledApp")
+    assert body["manifest"] == manifest, "provider did not return the manifest it validated"
+    assert body["digest"] == manifest["workload"]["digest"]
+
+    missing = client.get_installed_app("not-installed-" + new_idempotency_key())
+    assert missing.status_code == 404, f"unknown app returned {missing.status_code}, not 404"
+    schemas.assert_valid(schemas.component_validator("Error"), missing.json(), "Error")
+    return ok(
+        "core.installed_app_manifest_read",
+        CORE,
+        "installed manifest is retrievable by name; unknown app is 404",
+    )
+
+
 @case("core.ensure_and_get")
 def ensure_and_get(client, config, advertised):
     sid = _ensure_a_session(client, config)

@@ -17,7 +17,22 @@ from __future__ import annotations
 from . import adapters, attach, errors, sensitive
 from .client import BaristaClient
 from .config import Config
-from .models import Artifact, Discovery, Event, ExecHandle, Grant, Operation, Session
+from .models import Artifact, Discovery, Event, ExecHandle, Grant, InstalledApp, Operation, Session
+from .runs import (
+    APP_RUN_ENV,
+    APP_RUN_MEDIA_TYPE,
+    APP_RUN_RESULT_MEDIA_TYPE,
+    AppRun,
+    AppRunResult,
+    DeliveryRequest,
+    RunBinding,
+    RunOperation,
+    SecretReference,
+    RunSlot,
+    canonical_bytes,
+    content_id,
+    validate_run,
+)
 
 __version__ = "0.1.0a1"
 
@@ -31,6 +46,20 @@ __all__ = [
     "Artifact",
     "Event",
     "Grant",
+    "InstalledApp",
+    "AppRun",
+    "AppRunResult",
+    "RunBinding",
+    "DeliveryRequest",
+    "RunOperation",
+    "RunSlot",
+    "SecretReference",
+    "validate_run",
+    "canonical_bytes",
+    "content_id",
+    "APP_RUN_ENV",
+    "APP_RUN_MEDIA_TYPE",
+    "APP_RUN_RESULT_MEDIA_TYPE",
     "errors",
     "sensitive",
     "adapters",

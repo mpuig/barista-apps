@@ -1,0 +1,32 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "agent-shell",
+  "version": "1.0.0",
+  "workload": {
+    "image": "ghcr.io/example/agent-shell:1.0.0",
+    "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/agent-shell"],
+    "readiness": { "type": "none" }
+  },
+  "runs": {
+    "work": {
+      "lifecycle": "interactive",
+      "input": { "media_type": "text/plain" },
+      "bindings": {
+        "workspace": {
+          "kinds": ["sh.barista.git.repository"]
+        }
+      },
+      "outputs": {
+        "session": {
+          "kinds": ["sh.barista.session"],
+          "required": true
+        }
+      }
+    }
+  },
+  "permissions": {
+    "actions": ["session.attach"]
+  }
+}

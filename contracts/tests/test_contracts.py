@@ -28,8 +28,18 @@ SEMANTIC_SCHEMA = CONTRACTS / "session-story" / "v1alpha1" / "semantic-state.sch
 OPENAPI = CONTRACTS / "host-api" / "v1alpha1" / "openapi.yaml"
 EVENT_SCHEMA = CONTRACTS / "host-api" / "v1alpha1" / "streaming" / "event.schema.json"
 ATTACH_SCHEMA = CONTRACTS / "host-api" / "v1alpha1" / "streaming" / "attach-frame.schema.json"
+APP_RUN_SCHEMA = CONTRACTS / "app-run" / "v1alpha1" / "schema.json"
+APP_RUN_RESULT_SCHEMA = CONTRACTS / "app-run" / "v1alpha1" / "result.schema.json"
 
-ALL_JSON_SCHEMAS = [MANIFEST_SCHEMA, STORY_SCHEMA, SEMANTIC_SCHEMA, EVENT_SCHEMA, ATTACH_SCHEMA]
+ALL_JSON_SCHEMAS = [
+    MANIFEST_SCHEMA,
+    STORY_SCHEMA,
+    SEMANTIC_SCHEMA,
+    EVENT_SCHEMA,
+    ATTACH_SCHEMA,
+    APP_RUN_SCHEMA,
+    APP_RUN_RESULT_SCHEMA,
+]
 
 
 def load_json(path: Path) -> dict:
@@ -93,6 +103,73 @@ def test_plaintext_secret_is_rejected():
     manifest["permissions"] = {"secrets": [{"name": "API_KEY", "ref": "ok", "value": "sk-live-xyz"}]}
     errors = list(_manifest_validator().iter_errors(manifest))
     assert errors, "a secret entry with a plaintext 'value' must be rejected"
+
+
+# --------------------------------------------------------------------------- #
+# App Run: canonical envelopes/results, reference-only secrets, and lifecycle
+# declarations (apps-007).
+# --------------------------------------------------------------------------- #
+def _app_run_validator() -> Draft202012Validator:
+    return Draft202012Validator(
+        load_json(APP_RUN_SCHEMA), format_checker=Draft202012Validator.FORMAT_CHECKER
+    )
+
+
+def _app_run_result_validator() -> Draft202012Validator:
+    return Draft202012Validator(
+        load_json(APP_RUN_RESULT_SCHEMA), format_checker=Draft202012Validator.FORMAT_CHECKER
+    )
+
+
+VALID_APP_RUNS = sorted((APP_RUN_SCHEMA.parent / "examples").glob("*.json"))
+INVALID_APP_RUNS = sorted((APP_RUN_SCHEMA.parent / "invalid").glob("*.json"))
+VALID_APP_RUN_RESULTS = sorted((APP_RUN_SCHEMA.parent / "results").glob("*.json"))
+
+
+@pytest.mark.parametrize("example", VALID_APP_RUNS, ids=lambda p: p.name)
+def test_valid_app_run_examples(example: Path):
+    _app_run_validator().validate(load_json(example))
+
+
+@pytest.mark.parametrize("fixture", INVALID_APP_RUNS, ids=lambda p: p.name)
+def test_invalid_app_run_fixtures_are_rejected(fixture: Path):
+    errors = list(_app_run_validator().iter_errors(load_json(fixture)))
+    assert errors, f"{fixture.name} must fail validation but passed"
+
+
+@pytest.mark.parametrize("example", VALID_APP_RUN_RESULTS, ids=lambda p: p.name)
+def test_valid_app_run_result_examples(example: Path):
+    _app_run_result_validator().validate(load_json(example))
+
+
+def test_app_run_plaintext_secret_is_rejected():
+    run = load_json(APP_RUN_SCHEMA.parent / "examples" / "factory-issue.json")
+    run["secrets"]["forge"] = "ghp_plaintext"
+    assert list(_app_run_validator().iter_errors(run))
+
+
+def test_app_run_canonical_serialization_is_order_independent():
+    run = load_json(APP_RUN_SCHEMA.parent / "examples" / "factory-issue.json")
+    reordered = dict(reversed(list(run.items())))
+    assert canonical_bytes(run) == canonical_bytes(reordered)
+    assert content_id(run) == content_id(reordered)
+
+
+def test_manifest_run_examples_cover_every_lifecycle():
+    expected = {"job", "service", "interactive", "coordinator"}
+    observed = set()
+    for path in VALID_MANIFESTS:
+        for operation in load_json(path).get("runs", {}).values():
+            observed.add(operation["lifecycle"])
+    assert observed == expected
+
+
+def test_embedded_run_input_schemas_are_valid_draft202012():
+    for path in VALID_MANIFESTS:
+        for operation in load_json(path).get("runs", {}).values():
+            schema = operation["input"].get("schema")
+            if schema is not None:
+                validator_for(schema).check_schema(schema)
 
 
 # --------------------------------------------------------------------------- #

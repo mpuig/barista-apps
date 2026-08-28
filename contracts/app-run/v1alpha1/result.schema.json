@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/app-run/v1alpha1/result.schema.json",
+  "title": "Barista App Run Result",
+  "description": "Canonical result for one app operation. Media type: application/vnd.barista.app-run-result.v1alpha1+json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run", "app", "operation", "state", "identity", "bindings", "outputs"],
+  "properties": {
+    "schema_version": { "const": "v1alpha1" },
+    "run": { "$ref": "#/$defs/name" },
+    "app": { "type": "string", "minLength": 1 },
+    "operation": { "$ref": "#/$defs/name" },
+    "state": {
+      "type": "string",
+      "enum": ["accepted", "running", "ready", "succeeded", "failed", "cancelled", "lost_authority"]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "workload_digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "workload_digest": { "$ref": "#/$defs/digest" },
+        "manifest_digest": { "$ref": "#/$defs/digest" },
+        "source": { "type": "string", "minLength": 1 },
+        "source_revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "bindings": {
+      "description": "Resolved binding provenance. Mutable inputs record the immutable identity selected for this run.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/resolved_binding" }
+    },
+    "outputs": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/output" }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "details": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "maxLength": 80
+    },
+    "kind": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+      "maxLength": 214
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha(256|512):[0-9a-f]{64,128}$"
+    },
+    "resolved_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/kind" },
+        "uri": { "type": "string", "minLength": 1 },
+        "requested_ref": { "type": "string", "minLength": 1 },
+        "resolved_identity": { "type": "string", "minLength": 1 },
+        "metadata": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/kind" },
+        "uri": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "metadata": { "type": "object", "additionalProperties": true }
+      },
+      "anyOf": [
+        { "required": ["uri"] },
+        { "required": ["digest"] }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "digest"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/kind" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "uri": { "type": "string", "minLength": 1 },
+        "metadata": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}
