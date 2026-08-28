@@ -10,14 +10,17 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Mapping
 
 from barista_app_sdk import (
     APP_RUN_ENV,
     APP_SESSION_ID_ENV,
     AppRun,
+    AppRunResult,
     BaristaClient,
     Config,
     errors,
+    register_app_run_result,
 )
 
 from .coordinator import Coordinator
@@ -50,6 +53,8 @@ def exit_code_for(state) -> int:
 MISSION_ENV = "BARISTA_FACTORY_MISSION"
 FACTORY_RUN_OPERATION = "mission"
 FACTORY_MISSION_MEDIA_TYPE = "application/vnd.barista.factory.mission+json"
+FACTORY_VERSION = "0.1.0"
+FACTORY_WORKLOAD_DIGEST = "sha256:5f0f2b8c1d3e4a5b6c7d8e9f00112233445566778899aabbccddeeff00112233"
 
 
 def _map_app_run_to_mission() -> str | None:
@@ -91,6 +96,84 @@ def _map_app_run_to_mission() -> str | None:
     encoded = json.dumps(mission, sort_keys=True, separators=(",", ":"))
     os.environ[MISSION_ENV] = encoded
     return encoded
+
+
+def _typed_app_run() -> AppRun | None:
+    raw = os.environ.get(APP_RUN_ENV)
+    if not raw:
+        return None
+    try:
+        return AppRun.parse(json.loads(raw))
+    except (json.JSONDecodeError, errors.InvalidRequestError, TypeError, ValueError) as exc:
+        raise SystemExit(f"${APP_RUN_ENV} is not a valid App Run: {exc}") from exc
+
+
+def _publish_typed_result(client: BaristaClient, run: AppRun, state) -> None:
+    """Publish Factory's terminal result on the provider-injected owning scope."""
+    source = run.metadata.get("sh.barista.app-source", {})
+    if not isinstance(source, Mapping):
+        source = {}
+    identity = {
+        "name": source.get("name", "factory"),
+        "version": source.get("version", FACTORY_VERSION),
+        "workload_digest": source.get("workload_digest", FACTORY_WORKLOAD_DIGEST),
+    }
+    for field in ("manifest_digest", "source", "source_revision"):
+        if source.get(field):
+            identity[field] = source[field]
+
+    if state.authority_lost:
+        result_state = "lost_authority"
+    elif state.state == "done" and state.summary()["failed"] == 0:
+        result_state = "succeeded"
+    else:
+        result_state = "failed"
+
+    mission_result = {
+        "mission": state.mission,
+        "state": state.state,
+        "summary": state.summary(),
+        "credential": state.credential,
+        "authority_lost": state.authority_lost,
+    }
+    from barista_app_sdk.content import content_id
+
+    evidence = [
+        {
+            "kind": "sh.barista.factory.receipt",
+            "digest": content_id(task.receipt),
+            "metadata": {"task": task.id, "outcome": task.state},
+        }
+        for task in state.tasks.values()
+        if task.receipt is not None
+    ]
+    document = {
+        "schema_version": "v1alpha1",
+        "run": run.name,
+        "app": run.app,
+        "operation": run.operation,
+        "state": result_state,
+        "identity": identity,
+        "bindings": {},
+        "outputs": {
+            "result": {
+                "kind": "sh.barista.artifact",
+                "digest": content_id(mission_result),
+                "media_type": "application/vnd.barista.factory.mission-result+json",
+            }
+        },
+        "evidence": evidence,
+        "started_at": state.started_at,
+        "metadata": {"summary": state.summary()},
+    }
+    if state.finished_at:
+        document["finished_at"] = state.finished_at
+    if result_state != "succeeded":
+        document["error"] = {
+            "code": "factory.lost_authority" if state.authority_lost else "factory.mission_failed",
+            "message": state.authority_lost or "one or more Factory tasks did not succeed",
+        }
+    register_app_run_result(client, AppRunResult.parse(document))
 
 
 def _load_mission(path: str | None) -> Mission:
@@ -146,7 +229,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--state", default="/work/mission-state.json", help="Durable state path.")
     args = parser.parse_args(argv)
 
+    mission_was_explicit = args.mission is not None or bool(os.environ.get(MISSION_ENV))
     mission = _load_mission(args.mission)
+    # Publish a typed result only when this envelope actually supplied the
+    # mission. An explicit path or pre-existing Factory mission always wins and
+    # must not be mislabeled by a stale generic envelope.
+    typed_run = None if mission_was_explicit else _typed_app_run()
     config = _load_config(args.endpoint, args.token_env)
 
     print("coordinator ready", flush=True)  # readiness log line (see manifest)
@@ -158,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
             coordinator_session_id=os.environ.get(APP_SESSION_ID_ENV),
         )
         state = coordinator.run()
+        if typed_run is not None:
+            _publish_typed_result(client, typed_run, state)
 
     summary = state.summary()
     result = {"mission": mission.name, "state": state.state, **summary}

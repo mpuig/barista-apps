@@ -214,6 +214,40 @@ class BaristaClient:
         )
         return session, operation
 
+    def wait_app_run(
+        self,
+        run: AppRun,
+        session: Session,
+        operation: RunOperation,
+        *,
+        output: str | None = None,
+        cleanup: bool = False,
+        timeout: float = 600.0,
+        poll: float = 0.5,
+        max_result_bytes: int = 4 * 1024 * 1024,
+        expected_identity: Optional[dict[str, Any]] = None,
+    ):
+        """Observe the manifest-declared lifecycle over existing Host API resources.
+
+        Imported lazily to keep the client/model dependency one-way. Terminal
+        collection failures deliberately leave the owning session available for
+        bounded forensics.
+        """
+        from .lifecycle import wait_app_run
+
+        return wait_app_run(
+            self,
+            run,
+            session,
+            operation,
+            output=output,
+            cleanup=cleanup,
+            timeout=timeout,
+            poll=poll,
+            max_result_bytes=max_result_bytes,
+            expected_identity=expected_identity,
+        )
+
     # -- sessions --------------------------------------------------------- #
     def ensure_session(
         self,

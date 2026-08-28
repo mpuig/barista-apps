@@ -11,6 +11,8 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
   profiles; prove it with the conformance suite.
 - [Authoring an App Manifest](manifest-authoring.md) — digest pinning,
   reference-only secrets, least-privilege permissions, capabilities.
+- [Running typed app operations](app-runs.md) — canonical App Runs, lifecycle
+  observation, verified results, detach, and cleanup.
 - [Threat model](threat-model.md) — untrusted apps, delegated grants,
   exact-memory secrets, malicious capsules, stories, adapters, local
   remote-binding, and supply chain.

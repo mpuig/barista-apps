@@ -26,6 +26,29 @@ A result records the exact app source revision when one exists, the manifest and
 workload identities, and immutable binding identities such as a resolved Git
 commit.
 
+## Lifecycle and result rendezvous
+
+`service` and `interactive` operations complete runner observation when their
+owning Host API session is running. `job` and `coordinator` operations complete
+only after registering a terminal canonical result on that session.
+
+The v1alpha1 rendezvous is deliberately small and uses existing Host API
+primitives:
+
+- the canonical result bytes are written to
+  `/tmp/barista/app-run-result.json` in the owning session;
+- the app registers an artifact named `app-run-result.json` with media type
+  `application/vnd.barista.app-run-result.v1alpha1+json`, exact byte length, and
+  a `sha256` or `sha512` digest;
+- a runner reads the bytes through Host API exec while the session still exists,
+  verifies length, digest, schema, canonical encoding, run identity, and terminal
+  state, and persists requested local output before optional cleanup;
+- any collection or integrity failure preserves the owning session for bounded
+  forensics.
+
+Artifact registration is a rendezvous record, not byte storage. Deleting the
+session before collection may therefore destroy the only copy of the result.
+
 ## Inputs, bindings, secrets, and deliveries
 
 They are deliberately separate:

@@ -32,6 +32,15 @@ workload starts. The positional path remains for an operator invoking the
 binary directly. An explicitly named path that is unreadable is an error and
 never falls back to the environment.
 
+When launched through the shared App Run protocol, Factory also receives the
+provider-reserved `$BARISTA_APP_SESSION_ID`. It uses that owning session as the
+durable coordinator scope rather than creating a duplicate. At terminal
+completion it writes canonical result bytes to
+`/tmp/barista/app-run-result.json` and registers `app-run-result.json` on that
+scope. A runner can therefore verify and persist the result before optionally
+cleaning up the coordinator; direct `barista-factory run` invocation keeps its
+existing mission output unchanged.
+
 ## How it behaves
 
 - **One durable coordinator owns mission state** — task graph, worker handles,
