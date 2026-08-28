@@ -1,0 +1,70 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "change-agent",
+  "version": "0.1.0",
+  "description": "Run one bounded repository change job and return a verified patch or local branch.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-change-agent:0.1.0",
+    "digest": "sha256:6cc779a1bb624c8e5fd09b39637f2142d36dc21c7ce806e30e739759f7dc8eba",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/usr/local/bin/barista-change-agent"],
+    "working_dir": "/work",
+    "readiness": {"type": "none"}
+  },
+  "runs": {
+    "change": {
+      "description": "Apply one command-driven change to an immutable repository base, check it, and return a patch.",
+      "lifecycle": "job",
+      "input": {
+        "media_type": "application/json",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command", "check"],
+          "properties": {
+            "command": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {"type": "string", "minLength": 1, "maxLength": 8192}
+            },
+            "check": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {"type": "string", "minLength": 1, "maxLength": 8192}
+            },
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+            "workspace_max_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456},
+            "patch_max_bytes": {"type": "integer", "minimum": 1, "maximum": 16777216},
+            "branch": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$",
+              "maxLength": 200
+            },
+            "commit_message": {"type": "string", "minLength": 1, "maxLength": 500}
+          }
+        }
+      },
+      "bindings": {
+        "workspace": {"kinds": ["sh.barista.git.repository"], "required": true},
+        "objective": {
+          "kinds": ["sh.barista.text", "sh.barista.specification"],
+          "required": false
+        }
+      },
+      "outputs": {
+        "patch": {"kinds": ["sh.barista.git.patch"], "required": true},
+        "branch": {"kinds": ["sh.barista.git.branch"], "required": false}
+      }
+    }
+  },
+  "permissions": {
+    "actions": [
+      {"action": "artifact.write", "scope": "own_session"}
+    ],
+    "network": {"egress": "unrestricted"},
+    "artifacts": {"write": true}
+  }
+}

@@ -25,14 +25,14 @@
 
 ## 4. Source and forge adapters
 
-- [ ] 4.1 Implement the Git repository binding with one-time commit resolution, provenance, reference-only credentials, explicit submodule/LFS behavior, and provider-derived size limits where available. *(Resolution, detached exact checkout, askpass credential handling, submodule/LFS policy, provenance, and bounded materialization are implemented; wiring discovered provider limits and workspace distribution into reference apps remains.)*
+- [x] 4.1 Implement the Git repository binding with one-time commit resolution, provenance, reference-only credentials, explicit submodule/LFS behavior, and provider-derived size limits where available.
 - [x] 4.2 Implement objective bindings for local text/specification and forge issue content; keep objective content unable to widen run policy.
 - [x] 4.3 Implement patch/branch output and explicit draft-pull-request delivery behind a source-control/forge adapter rather than the Host API.
 - [x] 4.4 Add an offline fake forge and dishonest cases: raw token, moving base ref, publication outside the bound repository, and publication after failed verification.
 
 ## 5. Reference app adoption
 
-- [ ] 5.1 Declare and implement a single-agent repository job using the shared Git binding and canonical patch/result output.
+- [x] 5.1 Declare and implement a single-agent repository job using the shared Git binding and canonical patch/result output.
 - [ ] 5.2 Declare Factory's `software-change` coordinator operation with repository and objective bindings plus patch and draft-pull-request deliveries.
 - [x] 5.3 Map validated Factory mission input to `$BARISTA_FACTORY_MISSION`, preserving explicit-path errors and existing direct invocation.
 - [ ] 5.4 Give isolated Factory workers equivalent clean bases, collect declared patches, integrate them in the coordinator scope, and run coordinator-owned checks against the integrated tree.
@@ -43,7 +43,7 @@
 
 - [ ] 6.1 Add black-box cases proving invalid runs fail before installation/session side effects, retries preserve one owning session, and app-specific fields remain opaque to providers.
 - [ ] 6.2 Run the same single-agent and Factory envelopes against the local provider and managed provider by changing endpoint and credential only.
-- [ ] 6.3 Run standalone acceptance with Cloud DNS blocked, no Cloud credential, no proprietary import, local Git repositories, and the offline forge.
+- [x] 6.3 Run standalone acceptance with Cloud DNS blocked, no Cloud credential, no proprietary import, local Git repositories, and the offline forge.
 - [ ] 6.4 Run every affected package test, `scripts/supply_chain_check.py`, and `openspec validate --all --strict`.
 - [ ] 6.5 Record the actual command, app/workload identity, resolved project commit, checks, result digest, and draft-PR fake/managed delivery evidence before marking the change complete.
 

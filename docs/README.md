@@ -28,6 +28,6 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
 | `providers/local/` | Single-user reference Host API provider over `barista.sh` |
 | `sdks/python/` | Provider-neutral SDK + adapter interface |
 | `apps/{pi,claude,codex}/` | Harness adapters |
-| `apps/{factory,lift,story}/` | Portable apps |
+| `apps/{change-agent,factory,lift,story}/` | Portable apps |
 | `acceptance/` | Full offline acceptance flow (Cloud blocked) |
 | `scripts/supply_chain_check.py` | Digest/reference/lock/schema-drift checks |

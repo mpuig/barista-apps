@@ -15,10 +15,10 @@ provider, the Python SDK and the reference apps below all exist and are tested;
 place to start for *why* something is shaped the way it is.
 
 Conformance, as last measured against a managed provider (Barista Cloud beta,
-suite `0.1.0a1`, 2026-08-27):
+suite `0.1.0a1`, 2026-08-28, including the explicitly separate real-TTL case):
 
 ```
-cases: passed=23 failed=0 skipped=0 -> conformant=True
+cases: passed=25 failed=0 skipped=0 -> conformant=True
 ```
 
 certifying `core`, `session.pause_resume` and `grants.delegated`. The other
@@ -39,11 +39,13 @@ advertised profile. See [`conformance/README.md`](conformance/README.md).
 - **Local provider** — a useful, single-user reference implementation of the
   Host API over a local `barista.sh` Node Agent. No account, no proprietary
   component.
-- **SDK** — provider selection, capability negotiation, idempotency, and
-  streaming helpers on top of the Host API.
-- **Reference apps** — Pi, Claude Code, and Codex adapters; Factory
-  (coordinator/worker fan-out); Lift (exact and semantic session transfer);
-  Session Story (redacted, non-executable knowledge export).
+- **SDK** — provider selection, capability negotiation, idempotency, streaming,
+  typed App Run lifecycle/result collection, and source/forge adapters on top of
+  the Host API.
+- **Reference apps** — Pi, Claude Code, and Codex adapters; Change Agent
+  (single-agent repository patch job); Factory (coordinator/worker fan-out);
+  Lift (exact and semantic session transfer); Session Story (redacted,
+  non-executable knowledge export).
 
 ## What this is not
 
@@ -70,6 +72,7 @@ apps/
   pi/
   claude/
   codex/
+  change-agent/
   factory/
   lift/
   story/
