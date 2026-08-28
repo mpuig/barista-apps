@@ -22,6 +22,7 @@ from .lifecycle import (
     APP_RUN_RESULT_PATH,
     CollectedAppRun,
     collect_app_run_result,
+    hold_app_run_result,
     register_app_run_result,
     wait_app_run,
 )
@@ -32,14 +33,22 @@ from .forge import (
     BranchOutput,
     DraftChange,
     FakeForge,
+    ForgeAdapter,
     ForgeIssue,
+    GitHubForge,
     PatchArtifact,
     commit_workspace_branch,
     create_workspace_patch,
     deliver_draft_change,
     resolve_issue_objective,
 )
-from .resolution import ResolvedApp, resolve_app, resolve_installed_app, resolve_local_app
+from .resolution import (
+    ResolvedApp,
+    resolve_app,
+    resolve_installed_app,
+    resolve_local_app,
+    resolve_remote_app,
+)
 from .sources import (
     GIT_REPOSITORY_KIND,
     ResolvedGitRepository,
@@ -82,6 +91,7 @@ __all__ = [
     "resolve_app",
     "resolve_installed_app",
     "resolve_local_app",
+    "resolve_remote_app",
     "AppRun",
     "AppRunResult",
     "RunBinding",
@@ -108,6 +118,8 @@ __all__ = [
     "BranchOutput",
     "PatchArtifact",
     "FakeForge",
+    "ForgeAdapter",
+    "GitHubForge",
     "resolve_git_commit",
     "materialize_git_repository",
     "resolve_local_objective",
@@ -118,6 +130,7 @@ __all__ = [
     "CollectedAppRun",
     "collect_app_run_result",
     "register_app_run_result",
+    "hold_app_run_result",
     "wait_app_run",
     "errors",
     "sensitive",

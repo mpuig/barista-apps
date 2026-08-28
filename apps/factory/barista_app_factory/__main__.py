@@ -20,6 +20,7 @@ from barista_app_sdk import (
     BaristaClient,
     Config,
     errors,
+    hold_app_run_result,
     register_app_run_result,
 )
 
@@ -230,13 +231,28 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     mission_was_explicit = args.mission is not None or bool(os.environ.get(MISSION_ENV))
-    mission = _load_mission(args.mission)
-    # Publish a typed result only when this envelope actually supplied the
-    # mission. An explicit path or pre-existing Factory mission always wins and
-    # must not be mislabeled by a stale generic envelope.
+    # An explicit Factory mission keeps precedence over a stale generic
+    # envelope. Only an envelope that actually supplied the invocation may
+    # select the repository-backed operation.
     typed_run = None if mission_was_explicit else _typed_app_run()
-    config = _load_config(args.endpoint, args.token_env)
 
+    if typed_run is not None and typed_run.operation == "software-change":
+        from barista_app_sdk import GitHubForge
+
+        from .software_change import execute_software_change
+
+        config = _load_config(args.endpoint, args.token_env)
+        print("coordinator ready", flush=True)  # readiness log line (see manifest)
+        forge = GitHubForge(token=os.environ.get("GITHUB_TOKEN"))
+        with BaristaClient(config) as client:
+            app_result = execute_software_change(client, typed_run, forge=forge)
+        document = app_result.to_document()
+        print(json.dumps(document, sort_keys=True, separators=(",", ":")), flush=True)
+        hold_app_run_result()
+        return 0 if document["state"] == "succeeded" else 1
+
+    mission = _load_mission(args.mission)
+    config = _load_config(args.endpoint, args.token_env)
     print("coordinator ready", flush=True)  # readiness log line (see manifest)
     with BaristaClient(config) as client:
         coordinator = Coordinator(
@@ -249,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         if typed_run is not None:
             _publish_typed_result(client, typed_run, state)
 
+    if typed_run is not None:
+        hold_app_run_result()
     summary = state.summary()
     result = {"mission": mission.name, "state": state.state, **summary}
     if state.credential:

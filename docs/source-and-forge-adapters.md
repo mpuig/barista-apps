@@ -56,7 +56,15 @@ refuses unless all of these remain true:
 - the head branch is explicitly valid;
 - title/body pass secret-shape checks.
 
-`FakeForge` implements issue resolution, moving refs, and idempotent draft pull
-requests entirely offline. Repeating the same repository/branch/base/patch
-returns the existing draft; changing content under an existing branch is a
-conflict, never a duplicate pull request.
+`GitHubForge` is the concrete GitHub adapter. It resolves issue content and refs
+through the versioned API, applies the verified patch to the exact base in a
+temporary checkout, creates a deterministic head commit, pushes that head, and
+creates a draft pull request. Its token is sent only as an HTTP authorization
+header or through a mode-0700 `GIT_ASKPASS` helper and never appears in a URL or
+argv. Retries verify an existing branch, draft state, base, head, and embedded
+patch-digest marker instead of silently replacing conflicting content.
+
+`FakeForge` implements the same issue/ref/draft shape entirely offline. Repeating
+the same repository/branch/base/patch returns the existing draft; changing
+content under an existing branch is a conflict, never a duplicate pull request.
+Both adapters return the exact resulting head commit in the canonical output.

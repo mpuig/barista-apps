@@ -20,7 +20,7 @@
 
 - [x] 3.1 Add an OSS runner command that accepts `--app`, `--input`, repeatable `--bind`, `--output`, and cleanup/detach controls and emits the canonical envelope it runs.
 - [x] 3.2 Add convenience projections for repository, issue, mission, and delivery without creating a second wire shape.
-- [ ] 3.3 Resolve a remote app repository only through an exact revision and valid digest-pinned manifest; require an explicit development mode for building app source.
+- [x] 3.3 Resolve a remote app repository only through an exact revision and valid digest-pinned manifest; require an explicit development mode for building app source.
 - [x] 3.4 Keep the runner provider-neutral so a managed CLI can expose the same behavior as `barista run` without the OSS package importing managed code.
 
 ## 4. Source and forge adapters
@@ -33,19 +33,19 @@
 ## 5. Reference app adoption
 
 - [x] 5.1 Declare and implement a single-agent repository job using the shared Git binding and canonical patch/result output.
-- [ ] 5.2 Declare Factory's `software-change` coordinator operation with repository and objective bindings plus patch and draft-pull-request deliveries.
+- [x] 5.2 Declare Factory's `software-change` coordinator operation with repository and objective bindings plus patch and draft-pull-request deliveries.
 - [x] 5.3 Map validated Factory mission input to `$BARISTA_FACTORY_MISSION`, preserving explicit-path errors and existing direct invocation.
-- [ ] 5.4 Give isolated Factory workers equivalent clean bases, collect declared patches, integrate them in the coordinator scope, and run coordinator-owned checks against the integrated tree.
-- [ ] 5.5 Publish only a verified integrated head when draft-pull-request delivery was explicitly requested; otherwise return local artifacts and receipts.
-- [ ] 5.6 Add Story, Lift, and service manifest fixtures/declarations sufficient to prove the run contract supports non-repository jobs and non-terminal lifecycles.
+- [x] 5.4 Give isolated Factory workers equivalent clean bases, collect declared patches, integrate them in the coordinator scope, and run coordinator-owned checks against the integrated tree.
+- [x] 5.5 Publish only a verified integrated head when draft-pull-request delivery was explicitly requested; otherwise return local artifacts and receipts.
+- [x] 5.6 Add Story, Lift, and service manifest fixtures/declarations sufficient to prove the run contract supports non-repository jobs and non-terminal lifecycles.
 
 ## 6. Conformance and acceptance
 
-- [ ] 6.1 Add black-box cases proving invalid runs fail before installation/session side effects, retries preserve one owning session, and app-specific fields remain opaque to providers.
-- [ ] 6.2 Run the same single-agent and Factory envelopes against the local provider and managed provider by changing endpoint and credential only.
+- [x] 6.1 Add black-box cases proving invalid runs fail before installation/session side effects, retries preserve one owning session, and app-specific fields remain opaque to providers.
+- [x] 6.2 Run the same single-agent and Factory envelopes against the local provider and managed provider by changing endpoint and credential only.
 - [x] 6.3 Run standalone acceptance with Cloud DNS blocked, no Cloud credential, no proprietary import, local Git repositories, and the offline forge.
-- [ ] 6.4 Run every affected package test, `scripts/supply_chain_check.py`, and `openspec validate --all --strict`.
-- [ ] 6.5 Record the actual command, app/workload identity, resolved project commit, checks, result digest, and draft-PR fake/managed delivery evidence before marking the change complete.
+- [x] 6.4 Run every affected package test, `scripts/supply_chain_check.py`, and `openspec validate --all --strict`.
+- [x] 6.5 Record the actual command, app/workload identity, resolved project commit, checks, result digest, and draft-PR fake/managed delivery evidence before marking the change complete.
 
 ## Reconciliation note
 

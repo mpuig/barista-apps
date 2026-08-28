@@ -11,6 +11,22 @@
     "working_dir": "/work",
     "readiness": { "type": "none" }
   },
+  "runs": {
+    "generate": {
+      "description": "Generate a deterministic redacted story for a bound session.",
+      "lifecycle": "job",
+      "input": { "media_type": "application/json" },
+      "bindings": {
+        "session": { "kinds": ["sh.barista.session"], "required": true }
+      },
+      "outputs": {
+        "story": { "kinds": ["sh.barista.story"], "required": true }
+      },
+      "deliveries": {
+        "publication": { "kinds": ["sh.barista.story.publication"] }
+      }
+    }
+  },
   "capabilities": {
     "optional": [
       { "capability": "story.publish" }

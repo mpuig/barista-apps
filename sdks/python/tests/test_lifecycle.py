@@ -20,9 +20,22 @@ from barista_app_sdk import (
     canonical_bytes,
     collect_app_run_result,
     errors,
+    hold_app_run_result,
     register_app_run_result,
     wait_app_run,
 )
+
+
+def test_terminal_result_handoff_grace_is_bounded(monkeypatch):
+    import barista_app_sdk.lifecycle as lifecycle
+
+    slept = []
+    monkeypatch.setattr(lifecycle.time, "sleep", slept.append)
+    monkeypatch.setenv("BARISTA_APP_RESULT_GRACE_SECONDS", "9999")
+
+    hold_app_run_result()
+
+    assert slept == [300.0]
 
 
 def _run() -> AppRun:

@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 APP_RUN_RESULT_ARTIFACT = "app-run-result.json"
 APP_RUN_RESULT_PATH = "/tmp/barista/app-run-result.json"
 DEFAULT_MAX_RESULT_BYTES = 4 * 1024 * 1024
+DEFAULT_RESULT_GRACE_SECONDS = 120.0
+RESULT_GRACE_ENV = "BARISTA_APP_RESULT_GRACE_SECONDS"
 _TERMINAL_RESULT_STATES = frozenset({"succeeded", "failed", "cancelled", "lost_authority"})
 _SESSION_FAILURE_STATES = frozenset({"error", "failed", "destroyed", "stopped"})
 
@@ -78,6 +80,23 @@ def register_app_run_result(
         media_type=APP_RUN_RESULT_MEDIA_TYPE,
         idempotency_key=f"app-run-result-{result.content_id().split(':', 1)[1]}",
     )
+
+
+def hold_app_run_result(*, seconds: float | None = None) -> None:
+    """Keep a job guest reachable briefly after publishing its rendezvous.
+
+    Managed microVMs stop when PID 1 exits. Result collection uses an exec on
+    the owning session, so a terminal app must leave a bounded handoff window
+    after artifact registration. A runner that requested cleanup deletes the
+    session earlier; otherwise the process exits after this grace period.
+    """
+    selected = seconds
+    if selected is None:
+        try:
+            selected = float(os.environ.get(RESULT_GRACE_ENV, DEFAULT_RESULT_GRACE_SECONDS))
+        except ValueError:
+            selected = DEFAULT_RESULT_GRACE_SECONDS
+    time.sleep(max(0.0, min(float(selected), 300.0)))
 
 
 def wait_app_run(

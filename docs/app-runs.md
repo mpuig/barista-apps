@@ -40,7 +40,10 @@ Generic flags compile directly into one envelope:
 
 `--detach` and `--cleanup` cannot be combined. Collection, digest, schema, or
 persistence failure always leaves the owning session intact for bounded
-forensics.
+forensics. Terminal job/coordinator entrypoints keep a bounded 120-second
+handoff window after registering their result, because managed microVMs stop
+when PID 1 exits and result collection reads canonical bytes through an owning-
+session exec. Cleanup may end that window earlier.
 
 A local app manifest can be selected by path. A clean Git revision is recorded;
 a dirty source is refused unless `--development` is explicit. Development mode
@@ -70,9 +73,23 @@ barista-app run \
 This compiles to `bindings.workspace`, `bindings.objective`, and the explicit
 `deliveries.change`; issue text cannot create that delivery or alter its target.
 
-Remote **app-source** repositories are not cloned or executed implicitly. Until
-exact remote app-source resolution is implemented, install a validated pinned
-manifest or use a local manifest source. Git repositories supplied as project
-bindings are different: the source adapter resolves their ref once, checks out
-the exact commit, applies an explicit size bound, and refuses submodule or LFS
-behavior unless the binding chooses an implemented policy.
+A remote **app-source** repository must select an exact full commit and manifest
+path:
+
+```sh
+barista-app run \
+  --app 'git+https://github.com/acme/apps.git#0123456789abcdef0123456789abcdef01234567:apps/reviewer/manifest.json' \
+  --input review.json --detach
+```
+
+The resolver fetches only that immutable commit, reads and validates the
+manifest with `git show`, and records both manifest/workload identity and source
+revision before any provider mutation. It never checks out or executes app
+source and never builds it implicitly. URL credentials and mutable branch/tag
+names are refused. Building from modified local app source remains explicit
+`--development` behavior and still requires a digest-pinned workload manifest.
+
+Git repositories supplied as **project bindings** are different: the source
+adapter resolves their ref once, checks out the exact commit, applies an
+explicit size bound, and refuses submodule or LFS behavior unless the binding
+chooses an implemented policy.

@@ -65,6 +65,9 @@
       {"action": "artifact.write", "scope": "own_session"}
     ],
     "network": {"egress": "unrestricted"},
+    "secrets": [
+      {"name": "BARISTA_HOST_API_TOKEN", "ref": "grant://change-agent/owner"}
+    ],
     "artifacts": {"write": true}
   }
 }

@@ -41,7 +41,44 @@ scope. A runner can therefore verify and persist the result before optionally
 cleaning up the coordinator; direct `barista-factory run` invocation keeps its
 existing mission output unchanged.
 
-## How it behaves
+## Repository software changes
+
+Factory also declares the typed `software-change` coordinator operation. Its
+run binds one `sh.barista.git.repository` workspace and either a bounded local
+text/specification or `com.github.issue` objective. The objective is inert
+content: it cannot select a repository, add credentials, alter checks, request a
+delivery, or choose a publication target.
+
+The coordinator resolves the repository once, records its exact commit, then
+gives each isolated worker a separate clone checked out detached at that same
+commit. Workers never share a writable tree. Each successful worker yields a
+bounded, secret-scanned binary Git patch. Factory copies those patches and
+receipts into the owning session before deleting successful worker compute;
+failed workers remain available for bounded forensics.
+
+Factory applies the patches to a fresh integration checkout. Before running the
+acceptance argv, it reasserts any coordinator-owned acceptance files from the
+validated run envelope. The check subprocess gets a minimal environment without
+the Host API grant or forge credentials and runs as the image's unprivileged
+`nobody` account. A worker's attempt to weaken a criterion is therefore not
+accepted as evidence. Failed integration preserves worker patches and receipts
+and cannot publish.
+
+A draft pull request is created through a `ForgeAdapter` only if the run
+explicitly declares the `change` delivery and independent acceptance succeeds.
+The draft records the objective revision, exact base and resulting head,
+app/workload identity, integration-check receipt, integrated patch, and worker
+receipt digests. Without that delivery, the same verified run returns only its
+local patch, optional branch, and canonical result.
+
+The worker app must provide Git and a long-running exec-capable workload. A
+public GitHub repository works with the shipped network allowlist. Factory uses
+the SDK's concrete GitHub adapter for issue resolution and, when an explicit
+delivery and `GITHUB_TOKEN` are present, token-safe draft publication.
+Credentialed private-repository acquisition remains refused by this reference
+operation rather than exposing a token in argv or a clone URL.
+
+## How mission coordination behaves
 
 - **One durable coordinator owns mission state** — task graph, worker handles,
   attempts, and receipts persist after every transition. A restart reconstructs

@@ -6,7 +6,14 @@ import json
 import os
 import sys
 
-from barista_app_sdk import APP_RUN_ENV, AppRun, BaristaClient, Config, errors
+from barista_app_sdk import (
+    APP_RUN_ENV,
+    AppRun,
+    BaristaClient,
+    Config,
+    errors,
+    hold_app_run_result,
+)
 
 from .runner import execute_change_run
 
@@ -25,7 +32,8 @@ def main() -> int:
 
     with BaristaClient(config) as client:
         result = execute_change_run(client, run)
-    print(json.dumps(result.to_document(), sort_keys=True, separators=(",", ":")))
+    print(json.dumps(result.to_document(), sort_keys=True, separators=(",", ":")), flush=True)
+    hold_app_run_result()
     return 0 if result.to_document()["state"] == "succeeded" else 1
 
 
