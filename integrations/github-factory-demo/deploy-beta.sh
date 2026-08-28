@@ -9,8 +9,9 @@ NODE_HOST=${BARISTA_BETA_NODE_HOST:-88.99.166.242}
 SSH_KEY=${BARISTA_BETA_SSH_KEY:-"$HOME/.ssh/barista_hetzner"}
 KNOWN_HOSTS=${BARISTA_BETA_KNOWN_HOSTS:-"$HOME/.ssh/known_hosts.barista-deploy"}
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-FACTORY_TAG=${BARISTA_FACTORY_BETA_TAG:-0.5.4}
-WORKER_TAG=${BARISTA_GITHUB_WORKER_BETA_TAG:-0.1.0}
+FACTORY_TAG=${BARISTA_FACTORY_BETA_TAG:-0.6.0}
+TRIAGE_TAG=${BARISTA_GITHUB_TRIAGE_BETA_TAG:-0.1.0}
+WORKER_TAG=${BARISTA_GITHUB_WORKER_BETA_TAG:-0.2.0}
 
 # Refusal must precede SSH, rsync, Docker, and every production side effect.
 if [ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=normal)" ]; then
@@ -50,7 +51,7 @@ copy_source "$NODE_HOST"
 
 echo "== build and publish digest-pinned app images on managed node =="
 ssh "${SSHOPT[@]}" root@"$NODE_HOST" \
-  "DEPLOY_REV='$DEPLOY_REV' FACTORY_TAG='$FACTORY_TAG' WORKER_TAG='$WORKER_TAG' bash -s" <<'REMOTE'
+  "DEPLOY_REV='$DEPLOY_REV' FACTORY_TAG='$FACTORY_TAG' TRIAGE_TAG='$TRIAGE_TAG' WORKER_TAG='$WORKER_TAG' bash -s" <<'REMOTE'
 set -euo pipefail
 cd /opt/barista-apps
 REGISTRY=127.0.0.1:5000
@@ -58,6 +59,8 @@ curl -fsS "http://$REGISTRY/v2/" >/dev/null
 
 docker build -f apps/factory/Dockerfile -t "$REGISTRY/barista-factory:$FACTORY_TAG" .
 docker push "$REGISTRY/barista-factory:$FACTORY_TAG"
+docker build -f apps/github-issue-triage/Dockerfile -t "$REGISTRY/barista-github-issue-triage:$TRIAGE_TAG" .
+docker push "$REGISTRY/barista-github-issue-triage:$TRIAGE_TAG"
 docker build -f apps/github-issue-worker/Dockerfile -t "$REGISTRY/barista-github-issue-worker:$WORKER_TAG" .
 docker push "$REGISTRY/barista-github-issue-worker:$WORKER_TAG"
 
@@ -74,20 +77,33 @@ registry_digest() {
   printf '%s' "$digest"
 }
 FACTORY_DIGEST=$(registry_digest barista-factory "$FACTORY_TAG")
+TRIAGE_DIGEST=$(registry_digest barista-github-issue-triage "$TRIAGE_TAG")
 WORKER_DIGEST=$(registry_digest barista-github-issue-worker "$WORKER_TAG")
-python3 - "$DEPLOY_REV" "$FACTORY_TAG" "$FACTORY_DIGEST" "$WORKER_TAG" "$WORKER_DIGEST" <<'PY'
+python3 - "$DEPLOY_REV" "$FACTORY_TAG" "$FACTORY_DIGEST" "$TRIAGE_TAG" "$TRIAGE_DIGEST" "$WORKER_TAG" "$WORKER_DIGEST" <<'PY'
 import json
 import os
 import sys
 from pathlib import Path
 
-revision, factory_tag, factory_digest, worker_tag, worker_digest = sys.argv[1:]
+(
+    revision,
+    factory_tag,
+    factory_digest,
+    triage_tag,
+    triage_digest,
+    worker_tag,
+    worker_digest,
+) = sys.argv[1:]
 document = {
     "schema_version": "v1alpha1",
     "source_revision": revision,
     "factory": {
         "image": f"127.0.0.1:5000/barista-factory:{factory_tag}",
         "digest": factory_digest,
+    },
+    "triage": {
+        "image": f"127.0.0.1:5000/barista-github-issue-triage:{triage_tag}",
+        "digest": triage_digest,
     },
     "worker": {
         "image": f"127.0.0.1:5000/barista-github-issue-worker:{worker_tag}",

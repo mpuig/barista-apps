@@ -51,6 +51,30 @@ def test_issue_uri_and_objective_must_match(tmp_path):
         )
 
 
+def test_validated_ready_context_is_inert_worker_data(tmp_path):
+    root = _workspace(tmp_path)
+    output = apply_issue_objective(
+        {
+            "number": 7,
+            "title": "x",
+            "body": "make the requested change",
+            "state": "open",
+            "factory_context": {
+                "triage": {
+                    "schema_version": "v1alpha1",
+                    "state": "ready",
+                    "summary": "bounded summary",
+                    "acceptance_criteria": ["repository checks pass"],
+                },
+                "answers": [{"comment_id": 9, "body": "keep v1"}],
+            },
+        },
+        objective_uri="https://github.com/acme/demo/issues/7",
+        workspace=root,
+    )
+    assert "factory_context" not in output.read_text()
+
+
 def test_unknown_policy_shaped_fields_are_refused(tmp_path):
     root = _workspace(tmp_path)
     with pytest.raises(ObjectiveError, match="unsupported"):

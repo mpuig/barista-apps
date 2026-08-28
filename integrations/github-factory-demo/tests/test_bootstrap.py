@@ -105,6 +105,10 @@ def test_setup_seeds_webhook_installs_digest_pinned_apps_and_writes_non_secret_s
         factory_name="demo-factory",
         factory_image="ghcr.io/acme/factory:demo",
         factory_digest="sha256:" + "a" * 64,
+        triage_manifest=ROOT / "apps/github-issue-triage/manifest.json",
+        triage_name="demo-triage",
+        triage_image="ghcr.io/acme/triage:demo",
+        triage_digest="sha256:" + "c" * 64,
         worker_manifest=ROOT / "apps/github-issue-worker/manifest.json",
         worker_name="demo-worker",
         worker_image="ghcr.io/acme/worker:demo",
@@ -118,7 +122,7 @@ def test_setup_seeds_webhook_installs_digest_pinned_apps_and_writes_non_secret_s
     assert state["hook_id"] == 77
     assert state["status"] == "ready"
     assert [call[0] for call in admin.calls] == ["repo", "seed", "webhook"]
-    assert len(client.installs) == 2
+    assert len(client.installs) == 3
     assert client.installs[0][0]["name"] == "demo-factory"
     assert client.installs[0][0]["workload"]["digest"] == "sha256:" + "a" * 64
     assert client.installs[0][0]["permissions"]["secrets"] == [
@@ -128,7 +132,8 @@ def test_setup_seeds_webhook_installs_digest_pinned_apps_and_writes_non_secret_s
         "github"
         not in json.dumps(client.installs[0][0]["permissions"]["secrets"]).lower()
     )
-    assert client.installs[1][0]["name"] == "demo-worker"
+    assert client.installs[1][0]["name"] == "demo-triage"
+    assert client.installs[2][0]["name"] == "demo-worker"
     persisted = state_path.read_text()
     assert json.loads(persisted) == state
     assert "bootstrap-token" not in persisted
@@ -151,6 +156,10 @@ def test_setup_failure_keeps_teardown_identity_without_secrets(tmp_path):
             factory_name="demo-factory",
             factory_image="ghcr.io/acme/factory:demo",
             factory_digest="sha256:" + "a" * 64,
+            triage_manifest=ROOT / "apps/github-issue-triage/manifest.json",
+            triage_name="demo-triage",
+            triage_image="ghcr.io/acme/triage:demo",
+            triage_digest="sha256:" + "c" * 64,
             worker_manifest=ROOT / "apps/github-issue-worker/manifest.json",
             worker_name="demo-worker",
             worker_image="ghcr.io/acme/worker:demo",

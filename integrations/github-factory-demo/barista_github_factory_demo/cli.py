@@ -49,6 +49,14 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=REPOSITORY_ROOT / "apps/factory/manifest.json",
     )
+    setup.add_argument("--triage-name", default="github-issue-triage")
+    setup.add_argument("--triage-image", required=True)
+    setup.add_argument("--triage-digest", required=True)
+    setup.add_argument(
+        "--triage-manifest",
+        type=Path,
+        default=REPOSITORY_ROOT / "apps/github-issue-triage/manifest.json",
+    )
     setup.add_argument("--worker-name", default="github-issue-worker")
     setup.add_argument("--worker-image", required=True)
     setup.add_argument("--worker-digest", required=True)
@@ -77,6 +85,11 @@ def _parser() -> argparse.ArgumentParser:
         "--output", type=Path, default=Path("github-factory-live-evidence.json")
     )
     accept.add_argument("--timeout", type=float, default=1800)
+    accept.add_argument(
+        "--clarify",
+        action="store_true",
+        help="Exercise clarification, an authorized answer, and a fresh attempt.",
+    )
     return parser
 
 
@@ -99,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
             factory_name=args.factory_name,
             factory_image=args.factory_image,
             factory_digest=args.factory_digest,
+            triage_manifest=args.triage_manifest,
+            triage_name=args.triage_name,
+            triage_image=args.triage_image,
+            triage_digest=args.triage_digest,
             worker_manifest=args.worker_manifest,
             worker_name=args.worker_name,
             worker_image=args.worker_image,
@@ -110,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nController environment:")
         print(f"export BARISTA_GITHUB_REPOSITORY={state['repository']!r}")
         print(f"export BARISTA_FACTORY_APP={state['factory_app']!r}")
+        print(f"export BARISTA_FACTORY_TRIAGE_APP={state['triage_app']!r}")
         print(f"export BARISTA_FACTORY_WORKER_APP={state['worker_app']!r}")
         print(
             "# Keep GH_TOKEN and BARISTA_GITHUB_WEBHOOK_SECRET set; their values are never printed."
@@ -133,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             controller_url=args.controller_url,
             output=args.output,
             timeout=args.timeout,
+            clarify=args.clarify,
         )
         print(json.dumps(evidence, indent=2, sort_keys=True))
         return 0

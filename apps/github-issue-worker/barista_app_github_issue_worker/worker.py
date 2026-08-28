@@ -52,7 +52,7 @@ def apply_issue_objective(
     """Write one issue record; objective strings are data and are never executed."""
     if not isinstance(objective, Mapping):
         raise ObjectiveError("issue objective must be an object")
-    allowed = {"number", "title", "body", "state"}
+    allowed = {"number", "title", "body", "state", "factory_context"}
     if set(objective) - allowed:
         raise ObjectiveError("issue objective contains unsupported fields")
     number = objective.get("number")
@@ -63,6 +63,18 @@ def apply_issue_objective(
     state = _text(objective.get("state"), "state", 16)
     if state not in {"open", "closed"}:
         raise ObjectiveError("issue state must be open or closed")
+    context = objective.get("factory_context")
+    if context is not None:
+        if not isinstance(context, Mapping) or set(context) != {"triage", "answers"}:
+            raise ObjectiveError("Factory context is invalid")
+        triage = context.get("triage")
+        answers = context.get("answers")
+        if (
+            not isinstance(triage, Mapping)
+            or triage.get("state") != "ready"
+            or not isinstance(answers, list)
+        ):
+            raise ObjectiveError("Factory context is not a ready decision")
     uri = _issue_uri(objective_uri)
     if not uri.endswith(f"/issues/{number}"):
         raise ObjectiveError("issue URL and objective number differ")

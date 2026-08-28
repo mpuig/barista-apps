@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.sh/schemas/factory/triage-decision-v1alpha1.json",
+  "title": "Factory issue triage decision",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "state", "summary", "acceptance_criteria"],
+      "properties": {
+        "schema_version": {"const": "v1alpha1"},
+        "state": {"const": "ready"},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 8000},
+        "acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 2000}
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "state", "questions"],
+      "properties": {
+        "schema_version": {"const": "v1alpha1"},
+        "state": {"const": "needs_input"},
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "state", "reason_code", "message"],
+      "properties": {
+        "schema_version": {"const": "v1alpha1"},
+        "state": {"const": "refused"},
+        "reason_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    }
+  ]
+}

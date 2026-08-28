@@ -90,7 +90,7 @@ def main() -> int:
         "cat /opt/barista-apps/.github-factory-images.json",
     ]
     image_state = json.loads(subprocess.run(ssh, check=True, capture_output=True, text=True).stdout)
-    for app in ("factory", "worker"):
+    for app in ("factory", "triage", "worker"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_state[app]["digest"]):
             raise SystemExit(f"managed node returned invalid {app} digest")
 
@@ -106,6 +106,10 @@ def main() -> int:
             factory_name="github-demo-factory",
             factory_image=image_state["factory"]["image"],
             factory_digest=image_state["factory"]["digest"],
+            triage_manifest=root / "apps/github-issue-triage/manifest.json",
+            triage_name="github-issue-triage",
+            triage_image=image_state["triage"]["image"],
+            triage_digest=image_state["triage"]["digest"],
             worker_manifest=root / "apps/github-issue-worker/manifest.json",
             worker_name="github-issue-worker",
             worker_image=image_state["worker"]["image"],

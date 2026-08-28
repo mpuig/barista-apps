@@ -24,6 +24,7 @@ from .executor import FactoryRunExecutor
 from .store import Claim, DeliveryStore
 
 _DELIVERY_ID = re.compile(r"^[A-Za-z0-9-]{1,128}$")
+_QUESTION_MARKER = "<!-- barista-factory-question:"
 
 
 class DemoController:
@@ -50,16 +51,22 @@ class DemoController:
 
     def submit(self, claim: Claim) -> None:
         with self._lock:
-            if claim.delivery_id in self._scheduled:
+            if claim.run_name in self._scheduled:
                 return
-            self._scheduled.add(claim.delivery_id)
+            self._scheduled.add(claim.run_name)
         self._pool.submit(self._process, claim)
 
     def _process(self, claim: Claim) -> None:
         try:
             self.store.mark_running(claim.delivery_id)
             result = self.executor.execute(claim)
-            self.store.succeed(claim.delivery_id, result)
+            workflow_state = result.get("workflow_state")
+            if workflow_state == "needs_input":
+                self.store.await_input(claim.delivery_id, result)
+            elif workflow_state == "refused":
+                self.store.refuse(claim.delivery_id, result)
+            else:
+                self.store.succeed(claim.delivery_id, result)
         # This is the asynchronous process boundary: every provider, integrity,
         # forge, filesystem, and programming failure must become durable status.
         except Exception as exc:  # noqa: BLE001
@@ -82,7 +89,7 @@ class DemoController:
             self.store.fail(claim.delivery_id, message)
         finally:
             with self._lock:
-                self._scheduled.discard(claim.delivery_id)
+                self._scheduled.discard(claim.run_name)
 
     def close(self) -> None:
         self._pool.shutdown(wait=True, cancel_futures=False)
@@ -122,6 +129,7 @@ def create_app(
             "ok": True,
             "repository": selected.full_name,
             "factory_app": selected.factory_app,
+            "triage_app": selected.triage_app,
             "worker_app": selected.worker_app,
         }
 
@@ -172,7 +180,7 @@ def create_app(
             return JSONResponse(
                 status_code=202, content={"accepted": False, "reason": "ping"}
             )
-        if event != "issues":
+        if event not in {"issues", "issue_comment"}:
             return JSONResponse(
                 status_code=202,
                 content={"accepted": False, "reason": "unsupported event"},
@@ -184,11 +192,6 @@ def create_app(
         if not isinstance(payload, dict):
             raise HTTPException(
                 status_code=400, detail="webhook payload must be an object"
-            )
-        if payload.get("action") != "opened":
-            return JSONResponse(
-                status_code=202,
-                content={"accepted": False, "reason": "unsupported action"},
             )
 
         repository = payload.get("repository")
@@ -204,7 +207,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="issue number is invalid")
         issue_uri = issue.get("html_url")
         expected_issue_uri = f"{selected.repository}/issues/{number}"
-        if issue_uri != expected_issue_uri:
+        if issue_uri != expected_issue_uri or "pull_request" in issue:
             raise HTTPException(
                 status_code=400, detail="issue URL does not match repository"
             )
@@ -213,24 +216,92 @@ def create_app(
             raise HTTPException(status_code=400, detail="delivery id is invalid")
 
         repository_hash = hashlib.sha256(selected.repository.encode()).hexdigest()[:10]
-        run_name = f"github-{repository_hash}-issue-{number}"
-        claim = service.store.claim(
+        run_prefix = f"github-{repository_hash}-issue-{number}"
+        if event == "issues":
+            if payload.get("action") != "opened":
+                return JSONResponse(
+                    status_code=202,
+                    content={"accepted": False, "reason": "unsupported action"},
+                )
+            claim = service.store.claim(
+                delivery_id=delivery_id,
+                repository=selected.repository,
+                issue_number=number,
+                issue_uri=issue_uri,
+                run_name=f"{run_prefix}-attempt-1",
+            )
+            if claim.created:
+                service.submit(claim)
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "accepted": True,
+                    "duplicate": not claim.created,
+                    "delivery_id": claim.delivery_id,
+                    "run": claim.run_name,
+                    "status": claim.status,
+                },
+            )
+
+        if payload.get("action") != "created":
+            return JSONResponse(
+                status_code=202,
+                content={"accepted": False, "reason": "unsupported action"},
+            )
+        comment = payload.get("comment")
+        sender = payload.get("sender")
+        if not isinstance(comment, dict) or not isinstance(sender, dict):
+            raise HTTPException(status_code=400, detail="comment webhook is incomplete")
+        comment_id = comment.get("id")
+        login = sender.get("login")
+        answer = comment.get("body")
+        if (
+            not isinstance(comment_id, int)
+            or isinstance(comment_id, bool)
+            or comment_id <= 0
+            or not isinstance(login, str)
+            or not isinstance(answer, str)
+            or not answer.strip()
+            or len(answer.encode("utf-8")) > 64 * 1024
+        ):
+            raise HTTPException(status_code=400, detail="comment webhook is invalid")
+        try:
+            assert_no_high_confidence_secrets(answer)
+        except SecretLeak:
+            return JSONResponse(
+                status_code=202,
+                content={"accepted": False, "reason": "unsafe answer"},
+            )
+        is_self = bool(
+            selected.controller_login
+            and login.casefold() == selected.controller_login.casefold()
+        )
+        is_bot = (
+            sender.get("type") == "Bot"
+            or login.casefold().endswith("[bot]")
+            or _QUESTION_MARKER in answer
+        )
+        if is_self or is_bot or login.casefold() not in selected.responders:
+            return JSONResponse(
+                status_code=202,
+                content={"accepted": False, "reason": "unauthorized responder"},
+            )
+        claim, disposition = service.store.accept_answer(
             delivery_id=delivery_id,
             repository=selected.repository,
             issue_number=number,
-            issue_uri=issue_uri,
-            run_name=run_name,
+            comment_id=comment_id,
+            answer=answer,
+            run_name_prefix=run_prefix,
         )
-        if claim.created:
+        if claim is not None:
             service.submit(claim)
         return JSONResponse(
             status_code=202,
             content={
-                "accepted": True,
-                "duplicate": not claim.created,
-                "delivery_id": claim.delivery_id,
-                "run": claim.run_name,
-                "status": claim.status,
+                "accepted": claim is not None,
+                "reason": disposition,
+                "run": claim.run_name if claim is not None else None,
             },
         )
 

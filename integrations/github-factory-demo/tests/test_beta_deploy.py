@@ -83,4 +83,5 @@ def test_bootstrap_uses_separate_github_cli_authority_and_exact_image_state():
     assert 'factory_name="github-demo-factory"' in text
     assert 'worker_name="github-issue-worker"' in text
     assert 'webhook_url="https://github-factory.beta.barista.sh/webhooks/github"' in text
+    assert 'triage_name="github-issue-triage"' in text
     assert "bootstrap_token" not in text[text.index("print(json.dumps") :]

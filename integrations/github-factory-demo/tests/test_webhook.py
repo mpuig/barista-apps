@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -59,6 +60,28 @@ def payload(number: int = 7) -> bytes:
     ).encode()
 
 
+def comment_payload(
+    *,
+    number: int = 7,
+    comment_id: int = 101,
+    login: str = "acme",
+    body: str = "Keep v1 compatible.",
+) -> bytes:
+    return json.dumps(
+        {
+            "action": "created",
+            "repository": {"full_name": "acme/demo"},
+            "issue": {
+                "number": number,
+                "html_url": f"https://github.com/acme/demo/issues/{number}",
+            },
+            "comment": {"id": comment_id, "body": body},
+            "sender": {"login": login, "type": "User"},
+        },
+        separators=(",", ":"),
+    ).encode()
+
+
 def headers(
     body: bytes, *, delivery: str = "delivery-1", event: str = "issues"
 ) -> dict:
@@ -104,10 +127,148 @@ def test_signed_issue_is_accepted_asynchronously_and_persisted(tmp_path):
     assert claim.issue_uri == "https://github.com/acme/demo/issues/7"
     # Malicious title/body never enter the trusted claim or generated policy.
     assert "evil" not in repr(claim)
+    assert claim.attempt == 1
+    assert claim.run_name.endswith("-attempt-1")
     assert result["result"]["draft"]["uri"].endswith("/pull/1")
     assert status.status_code == 200
     assert issue_status.status_code == 200
     assert issue_status.json()["delivery_id"] == "delivery-1"
+    controller.close()
+
+
+def test_authorized_answer_resumes_one_fresh_attempt_and_deduplicates(tmp_path):
+    selected = config(tmp_path)
+    store = DeliveryStore(selected.database)
+
+    class ClarifyingExecutor:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, claim):
+            self.calls.append(claim)
+            if claim.attempt == 1:
+                return {
+                    "workflow_state": "needs_input",
+                    "question_digest": "sha256:" + "1" * 64,
+                    "factory_result_digest": "sha256:" + "2" * 64,
+                }
+            return {"workflow_state": "verified_for_review"}
+
+    executor = ClarifyingExecutor()
+    controller = DemoController(selected, store=store, executor=executor)
+    with TestClient(create_app(selected, controller=controller)) as client:
+        opened = payload()
+        client.post("/webhooks/github", content=opened, headers=headers(opened))
+        waiting = wait_status(store, "delivery-1", "awaiting_input")
+        answer = comment_payload()
+        resumed = client.post(
+            "/webhooks/github",
+            content=answer,
+            headers=headers(
+                answer, delivery="comment-delivery-1", event="issue_comment"
+            ),
+        )
+        duplicate = client.post(
+            "/webhooks/github",
+            content=answer,
+            headers=headers(
+                answer, delivery="comment-delivery-1", event="issue_comment"
+            ),
+        )
+        final = wait_status(store, "delivery-1", "succeeded")
+
+    assert waiting["attempt"] == 1
+    assert resumed.json()["accepted"] is True
+    assert resumed.json()["run"].endswith("-attempt-2")
+    assert duplicate.json() == {"accepted": False, "reason": "duplicate", "run": None}
+    assert len(executor.calls) == 2
+    second = executor.calls[1]
+    assert second.answer_comment_id == 101
+    assert second.answer == "Keep v1 compatible."
+    assert second.prior_result_digest == "sha256:" + "2" * 64
+    assert second.answers == (
+        {
+            "comment_id": 101,
+            "body": "Keep v1 compatible.",
+            "prior_result_digest": "sha256:" + "2" * 64,
+        },
+    )
+    assert final["attempt"] == 2
+    assert final["answer_count"] == 1
+    controller.close()
+
+
+def test_multiple_clarifications_preserve_bounded_correlated_answer_history(tmp_path):
+    selected = config(tmp_path)
+    store = DeliveryStore(selected.database)
+    claim = store.claim(
+        delivery_id="issue-opened",
+        repository=selected.repository,
+        issue_number=7,
+        issue_uri=selected.repository + "/issues/7",
+        run_name="github-62924231c5-issue-7-attempt-1",
+    )
+    for attempt, comment_id in ((1, 101), (2, 102)):
+        store.await_input(
+            claim.delivery_id,
+            {
+                "workflow_state": "needs_input",
+                "question_digest": "sha256:" + str(attempt) * 64,
+                "factory_result_digest": "sha256:" + str(attempt + 2) * 64,
+            },
+        )
+        claim, disposition = store.accept_answer(
+            delivery_id=f"answer-{attempt}",
+            repository=selected.repository,
+            issue_number=7,
+            comment_id=comment_id,
+            answer=f"answer {attempt}",
+            run_name_prefix="github-62924231c5-issue-7",
+        )
+        assert disposition == "accepted"
+        assert claim is not None
+    assert claim.attempt == 3
+    assert [answer["comment_id"] for answer in claim.answers] == [101, 102]
+    assert claim.answers[1]["prior_result_digest"] == "sha256:" + "4" * 64
+    store.close()
+
+
+def test_unauthorized_bot_self_and_stale_comments_are_inert(tmp_path):
+    selected = ControllerConfig(
+        **{
+            **config(tmp_path).__dict__,
+            "authorized_responders": ("maintainer",),
+            "controller_login": "barista-bot",
+        }
+    )
+    store = DeliveryStore(selected.database)
+    executor = Executor()
+    controller = DemoController(selected, store=store, executor=executor)
+    with TestClient(create_app(selected, controller=controller)) as client:
+        rejected = (
+            ("stranger", "ordinary"),
+            ("barista-bot", "ordinary"),
+            ("dependabot[bot]", "ordinary"),
+            ("maintainer", "<!-- barista-factory-question:sha256:abc -->"),
+        )
+        for index, (login, comment_body) in enumerate(rejected, 1):
+            body = comment_payload(comment_id=index, login=login, body=comment_body)
+            response = client.post(
+                "/webhooks/github",
+                content=body,
+                headers=headers(
+                    body, delivery=f"comment-{index}", event="issue_comment"
+                ),
+            )
+            assert response.json()["accepted"] is False
+        stale = comment_payload(comment_id=9, login="maintainer")
+        response = client.post(
+            "/webhooks/github",
+            content=stale,
+            headers=headers(stale, delivery="comment-9", event="issue_comment"),
+        )
+    assert response.json()["reason"] == "stale"
+    assert executor.calls == []
     controller.close()
 
 
@@ -192,6 +353,24 @@ def test_delivery_and_issue_deduplication_launch_exactly_once(tmp_path):
     controller.close()
 
 
+def test_refused_triage_is_terminal_without_becoming_a_failure(tmp_path):
+    selected = config(tmp_path)
+    store = DeliveryStore(selected.database)
+
+    class RefusingExecutor:
+        def execute(self, claim):
+            return {"workflow_state": "refused", "reason_code": "unsupported"}
+
+    controller = DemoController(selected, store=store, executor=RefusingExecutor())
+    with TestClient(create_app(selected, controller=controller)) as client:
+        body = payload()
+        client.post("/webhooks/github", content=body, headers=headers(body))
+        result = wait_status(store, "delivery-1", "refused")
+    assert result["error"] is None
+    assert result["result"]["reason_code"] == "unsupported"
+    controller.close()
+
+
 def test_failure_is_durable_for_forensics(tmp_path):
     selected = config(tmp_path)
     store = DeliveryStore(selected.database)
@@ -225,6 +404,43 @@ def test_failure_status_redacts_controller_credentials(tmp_path):
     assert "webhook-secret" not in result["error"]
     assert "redacted" in result["error"]
     controller.close()
+
+
+def test_existing_controller_database_is_migrated_without_losing_claims(tmp_path):
+    path = tmp_path / "old.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE deliveries (
+            delivery_id TEXT PRIMARY KEY,
+            repository TEXT NOT NULL,
+            issue_number INTEGER NOT NULL,
+            issue_uri TEXT NOT NULL,
+            status TEXT NOT NULL,
+            run_name TEXT NOT NULL,
+            result_json TEXT,
+            error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(repository, issue_number)
+        );
+        INSERT INTO deliveries VALUES (
+            'old-delivery', 'https://github.com/acme/demo', 3,
+            'https://github.com/acme/demo/issues/3', 'accepted',
+            'github-62924231c5-issue-3', NULL, NULL, 1, 1
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = DeliveryStore(path)
+    document = store.get("old-delivery")
+    recovered = store.recoverable()
+    assert document is not None and document["attempt"] == 1
+    assert len(recovered) == 1
+    assert recovered[0].run_name == "github-62924231c5-issue-3"
+    store.close()
 
 
 def test_restart_recovers_a_durable_accepted_claim(tmp_path):

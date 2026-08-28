@@ -38,6 +38,9 @@ From the repository root:
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f apps/factory/Dockerfile -t REGISTRY/barista-factory:github-demo --push .
 docker buildx build --platform linux/amd64,linux/arm64 \
+  -f apps/github-issue-triage/Dockerfile \
+  -t REGISTRY/barista-github-issue-triage:0.1.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
   -f apps/github-issue-worker/Dockerfile \
   -t REGISTRY/barista-github-issue-worker:0.1.0 --push .
 # Record registry-reported sha256 index digests. Tags are not executable identity.
@@ -124,13 +127,15 @@ uv run barista-github-demo setup \
   --webhook-url https://PUBLIC_HOST/webhooks/github \
   --factory-image REGISTRY/barista-factory:github-demo \
   --factory-digest sha256:... \
-  --worker-image REGISTRY/barista-github-issue-worker:0.1.0 \
+  --triage-image REGISTRY/barista-github-issue-triage:0.1.0 \
+  --triage-digest sha256:... \
+  --worker-image REGISTRY/barista-github-issue-worker:0.2.0 \
   --worker-digest sha256:...
 ```
 
 Setup creates (or explicitly reuses with `--reuse`) a public repository, refuses
 to overwrite differing seed files, installs the digest-pinned Factory and
-worker manifests, creates/updates an `issues` webhook, and writes mode-0600
+worker manifests, creates/updates an `issues` and `issue_comment` webhook, and writes mode-0600
 `.barista-github-demo.json`. It never writes either token or the signing secret
 to that state file.
 
@@ -141,7 +146,12 @@ unset GH_TOKEN
 export BARISTA_GITHUB_TOKEN='...one-repository runtime token...'
 export BARISTA_GITHUB_REPOSITORY='https://github.com/OWNER/barista-factory-demo'
 export BARISTA_FACTORY_APP='github-demo-factory@0.1.0'
+export BARISTA_FACTORY_TRIAGE_APP='github-issue-triage'
 export BARISTA_FACTORY_WORKER_APP='github-issue-worker'
+# Optional comma-separated trusted responders; defaults to the repository owner.
+export BARISTA_GITHUB_AUTHORIZED_RESPONDERS='OWNER'
+# Identify the runtime bot so its own marker comments cannot resume work.
+export BARISTA_GITHUB_CONTROLLER_LOGIN='barista-factory-bot'
 uv run barista-github-demo serve --host 0.0.0.0 --port 8098
 ```
 
@@ -179,17 +189,24 @@ For an opt-in real-GitHub acceptance against the running public controller:
 ```sh
 uv run barista-github-demo accept \
   --controller-url https://PUBLIC_HOST \
+  --clarify \
   --output github-factory-live-evidence.json
 ```
 
-This creates a real issue, waits by issue identity, verifies the draft flag,
-exact base/head, patch marker, canonical Factory result digest, and owning-session
-absence, then writes non-secret evidence. It is intentionally not part of CI.
+With `--clarify`, this creates an unclear real issue, verifies the correlated
+question comment, posts one authorized answer, requires a fresh attempt, then
+verifies the draft flag, exact base/head, patch marker, canonical Factory result
+digest, and owning-session absence. It writes non-secret evidence and is
+intentionally not part of CI. Omit `--clarify` for the direct-ready path.
 
 Factory/session failures and pre-delivery verification failures are recorded as
 `failed` and preserve the owning session for bounded operator forensics. A
-controller restart re-dispatches durable `accepted` or `running` rows. Stable
-run and `barista/issue-N` branch identities plus forge-side marker checks prevent
+controller restart re-dispatches durable `accepted` or `running` rows. A
+validated clarification result can end an attempt as `awaiting_input`; only a
+signed fresh comment from a configured responder advances it. Duplicate, stale,
+bot, and self comments remain inert. Attempt run names are stable
+`github-REPO-issue-N-attempt-A` identities while the publication branch remains
+`barista/issue-N`. Stable identities plus forge-side marker checks prevent
 retry-created duplicate sessions or pull requests.
 
 ## Teardown
