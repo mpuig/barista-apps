@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "github-issue-worker",
+  "version": "0.1.0",
+  "description": "Deterministic Factory demo worker that records bounded GitHub issue objective data without executing it.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-github-issue-worker:0.1.0",
+    "digest": "sha256:91c91c85747f50a02b9b063b164033a7106dcc963836051438eb54d292b92a68",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/bin/sh", "-c", "sleep infinity"],
+    "working_dir": "/work",
+    "readiness": {"type": "none"}
+  },
+  "metadata": {
+    "sh.barista.github-factory-demo": {
+      "command": ["/usr/local/bin/barista-demo-issue-worker"]
+    }
+  }
+}

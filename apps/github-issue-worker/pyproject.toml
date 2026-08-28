@@ -1,0 +1,23 @@
+[project]
+name = "barista-app-github-issue-worker"
+version = "0.1.0a1"
+description = "Deterministic, non-executing GitHub issue demo worker for Factory."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+barista-demo-issue-worker = "barista_app_github_issue_worker.worker:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_github_issue_worker"]
+artifacts = ["barista_app_github_issue_worker/manifest.json"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

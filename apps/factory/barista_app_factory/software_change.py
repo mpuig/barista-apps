@@ -143,6 +143,7 @@ def _worker(
     repository_uri: str,
     commit: str,
     objective: bytes,
+    objective_uri: str,
     timeout: int,
     patch_limit: int,
     owner: str,
@@ -190,6 +191,7 @@ def _worker(
             timeout=timeout,
             env={
                 "BARISTA_OBJECTIVE_PATH": WORKER_OBJECTIVE,
+                "BARISTA_OBJECTIVE_URI": objective_uri,
                 "BARISTA_BASE_COMMIT": commit,
             },
             working_dir=WORKER_PROJECT,
@@ -410,7 +412,15 @@ def execute_software_change(
             "repository credential alias was not materialized for Factory",
             "factory.repository_credential_unavailable",
         )
-    if (objective_binding.kind == GITHUB_ISSUE_KIND or delivery is not None) and forge is None:
+    delivery_executor = (
+        str(delivery.options.get("executor", "factory")) if delivery is not None else "factory"
+    )
+    if delivery_executor not in {"factory", "runner"}:
+        raise _invalid("delivery executor must be 'factory' or 'runner'", "factory.delivery_executor")
+    forge_is_needed = objective_binding.kind == GITHUB_ISSUE_KIND or (
+        delivery is not None and delivery_executor == "factory"
+    )
+    if forge_is_needed and forge is None:
         raise _invalid("forge objective or delivery requires a forge adapter", "factory.forge_missing")
     if delivery is not None and delivery.target != workspace_binding.uri:
         raise _invalid("delivery target is outside the bound repository", "factory.delivery_scope")
@@ -483,6 +493,7 @@ def execute_software_change(
                     repository_uri=repository.uri,
                     commit=repository.commit,
                     objective=objective_bytes,
+                    objective_uri=objective_binding.uri,
                     timeout=timeout,
                     patch_limit=patch_limit,
                     owner=owner,
@@ -583,7 +594,7 @@ def execute_software_change(
             )
             outputs["branch"] = branch.to_result_output()
 
-        if delivery is not None:
+        if delivery is not None and delivery_executor == "factory":
             assert forge is not None  # established by mutation-free preflight
             identity = _identity(run, manifest)
             receipt_digests = sorted(
@@ -644,7 +655,18 @@ def execute_software_change(
                     "patch_digest": outcome.patch_digest,
                 }
                 for outcome in outcomes
-            }
+            },
+            "pending_deliveries": (
+                {
+                    "change": {
+                        "kind": delivery.kind,
+                        "target": delivery.target,
+                        "request_digest": content_id(delivery.to_document()),
+                    }
+                }
+                if error is None and delivery is not None and delivery_executor == "runner"
+                else {}
+            ),
         },
     }
     if error:

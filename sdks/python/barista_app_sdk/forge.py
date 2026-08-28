@@ -485,6 +485,45 @@ class GitHubForge:
             raise _refused("GitHub ref response is invalid", code="delivery.base_not_found")
         return str((document.get("object") or {}).get("sha", ""))
 
+    def create_issue_comment(self, issue_uri: str, body: str) -> str:
+        """Post a non-secret result link to one canonical GitHub issue."""
+        if not self._token:
+            raise _refused("GitHub issue comment requires a token", code="delivery.credential_required")
+        assert_no_high_confidence_secrets(body)
+        parsed = urlparse(issue_uri)
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or len(parts) != 4
+            or parts[2] != "issues"
+            or not parts[3].isdigit()
+        ):
+            raise _invalid("GitHub issue URI is invalid", code="binding.issue_uri")
+        path = f"/repos/{quote(parts[0])}/{quote(parts[1])}/issues/{parts[3]}/comments"
+        for page in range(1, 11):
+            existing = self._request("GET", path + f"?per_page=100&page={page}")
+            if not isinstance(existing, list):
+                raise _refused("GitHub comment list response is invalid", code="forge.response")
+            for comment in existing:
+                if (
+                    isinstance(comment, dict)
+                    and comment.get("body") == body
+                    and comment.get("html_url")
+                ):
+                    return str(comment["html_url"])
+            if len(existing) < 100:
+                break
+        document = self._request(
+            "POST",
+            path,
+            document={"body": body},
+            expected=(201,),
+        )
+        if not isinstance(document, dict) or not document.get("html_url"):
+            raise _refused("GitHub comment response is invalid", code="forge.response")
+        return str(document["html_url"])
+
     def create_draft_change(
         self,
         *,
@@ -571,6 +610,14 @@ class GitHubForge:
                     code="delivery.branch_conflict",
                 )
 
+        # Recheck after the authenticated push. The base may have moved during
+        # clone/apply/push; never create a PR that silently targets a newer base.
+        if self.resolve_ref(repository_uri, base_ref) != base_commit:
+            raise _refused(
+                "repository base ref moved during delivery",
+                code="delivery.moving_base",
+                details={"resolved_commit": base_commit},
+            )
         existing = self._request(
             "GET",
             f"/repos/{quote(owner)}/{quote(repository)}/pulls?state=open&head={quote(owner + ':' + head_branch)}",

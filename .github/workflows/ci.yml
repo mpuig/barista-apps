@@ -116,6 +116,22 @@ jobs:
         working-directory: apps/factory
         run: uv run --extra test pytest -q
 
+  github-factory-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Deterministic GitHub issue worker tests (offline)
+        working-directory: apps/github-issue-worker
+        run: uv run --extra test pytest -q
+
+      - name: Signed webhook controller and bootstrap tests (offline)
+        working-directory: integrations/github-factory-demo
+        run: uv run --extra test pytest -q
+
   lift:
     runs-on: ubuntu-latest
     steps:

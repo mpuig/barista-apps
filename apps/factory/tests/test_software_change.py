@@ -307,6 +307,34 @@ def test_factory_integrates_isolated_patches_reasserts_acceptance_and_delivers(t
     assert len(forge.changes) == 1
 
 
+def test_runner_owned_delivery_returns_verified_patch_without_forge_side_effect(tmp_path, monkeypatch):
+    repo, commit, acceptance = _repository(tmp_path)
+    patches = {
+        "a": _patch(repo, tmp_path / "worker-a", {"a.txt": "1\n"}),
+        "b": _patch(repo, tmp_path / "worker-b", {"b.txt": "1\n"}),
+    }
+    client = WorkerClient(patches)
+    forge = _forge(repo, commit)
+    _result_path(tmp_path, monkeypatch)
+    document = _run(repo, acceptance).to_document()
+    document["deliveries"]["change"]["options"]["executor"] = "runner"
+    run = AppRun.parse(document)
+
+    result = execute_software_change(
+        client,
+        run,
+        forge=forge,
+        work_root=tmp_path / "runs",
+    ).to_document()
+
+    assert result["state"] == "succeeded"
+    assert set(result["outputs"]) == {"patch", "branch"}
+    pending = result["metadata"]["pending_deliveries"]["change"]
+    assert pending["target"] == repo.as_uri()
+    assert pending["request_digest"].startswith("sha256:")
+    assert forge.changes == []
+
+
 def test_verified_run_without_delivery_returns_only_local_outputs(tmp_path, monkeypatch):
     repo, commit, acceptance = _repository(tmp_path)
     patches = {

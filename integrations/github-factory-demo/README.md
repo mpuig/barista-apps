@@ -1,0 +1,169 @@
+# GitHub issue → Factory → verified draft pull request
+
+This integration is a persistent signed-webhook controller. Every accepted
+`issues/opened` event launches one ephemeral Factory App Run. Factory resolves
+the issue and exact repository base, gives the deterministic worker an isolated
+checkout, harvests its patch, integrates it, and runs the seed acceptance check.
+The controller then re-verifies Factory's canonical result and patch, creates an
+idempotent draft pull request through `GitHubForge`, comments on the issue, saves
+a compact result, and deletes the owning session.
+
+The persistent trigger is not an App Run. Factory and each child worker are.
+There is no second provider scheduler.
+
+## Authority boundaries
+
+- `BARISTA_GITHUB_WEBHOOK_SECRET` only authenticates ingress.
+- `GH_TOKEN` is bootstrap authority and may create/delete the demo repository
+  and webhook. Do not keep this broad token in the runtime service.
+- `BARISTA_GITHUB_TOKEN` is runtime forge authority. Scope it only to the one
+  repository with Issues read/write, Contents read/write, Pull requests
+  read/write, and Metadata read.
+- `BARISTA_HOST_API_TOKEN` is runtime Factory authority.
+- GitHub and Host API tokens stay in the trusted controller. They are not put in
+  App Run envelopes, Factory/worker environments, objective files, argv, clone
+  URLs, result documents, or webhook responses.
+- The issue title and body are untrusted objective data. They cannot change the
+  repository, exact base, worker app, command, acceptance file, branch, delivery
+  target, or credentials.
+
+Use a **public disposable repository** for this reference demo. That permits
+Factory's Git acquisition without granting a GitHub token to the session.
+
+## Build and publish digest-pinned images
+
+From the repository root:
+
+```sh
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f apps/factory/Dockerfile -t REGISTRY/barista-factory:github-demo --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f apps/github-issue-worker/Dockerfile \
+  -t REGISTRY/barista-github-issue-worker:0.1.0 --push .
+# Record registry-reported sha256 index digests. Tags are not executable identity.
+```
+
+The Factory image must contain the runtime manifest whose identity is installed
+by setup. If you change image references or digests, build from a matching
+manifest rather than claiming a different runtime identity.
+
+## Install the controller
+
+```sh
+cd integrations/github-factory-demo
+uv sync --extra test
+```
+
+The Host API configuration uses the normal SDK variables, notably
+`BARISTA_HOST_API_ENDPOINT` and `BARISTA_HOST_API_TOKEN`.
+
+## Bootstrap
+
+Expose the controller at a stable public HTTPS URL. The webhook URL must end in
+`/webhooks/github`. Then use a separate bootstrap token:
+
+```sh
+export GH_TOKEN='...bootstrap token...'
+export BARISTA_GITHUB_WEBHOOK_SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+export BARISTA_HOST_API_ENDPOINT='https://...'
+export BARISTA_HOST_API_TOKEN='...'
+
+uv run barista-github-demo setup \
+  --owner OWNER \
+  --repository barista-factory-demo \
+  --webhook-url https://PUBLIC_HOST/webhooks/github \
+  --factory-image REGISTRY/barista-factory:github-demo \
+  --factory-digest sha256:... \
+  --worker-image REGISTRY/barista-github-issue-worker:0.1.0 \
+  --worker-digest sha256:...
+```
+
+Setup creates (or explicitly reuses with `--reuse`) a public repository, refuses
+to overwrite differing seed files, installs the digest-pinned Factory and
+worker manifests, creates/updates an `issues` webhook, and writes mode-0600
+`.barista-github-demo.json`. It never writes either token or the signing secret
+to that state file.
+
+After setup, replace `GH_TOKEN` with a repository-scoped runtime token:
+
+```sh
+unset GH_TOKEN
+export BARISTA_GITHUB_TOKEN='...one-repository runtime token...'
+export BARISTA_GITHUB_REPOSITORY='https://github.com/OWNER/barista-factory-demo'
+export BARISTA_FACTORY_APP='github-demo-factory@0.1.0'
+export BARISTA_FACTORY_WORKER_APP='github-issue-worker'
+uv run barista-github-demo serve --host 0.0.0.0 --port 8098
+```
+
+Persist the SQLite database and results directory across controller restarts.
+The supplied controller image uses `/state` for both. For local testing, put the
+bound port behind an HTTPS tunnel such as Cloudflare Tunnel or ngrok; configure
+the GitHub webhook with the tunnel's exact `/webhooks/github` URL. Treat tunnel
+URLs as setup identity: rerun setup with `--reuse` when the URL changes.
+
+## Replacing the deterministic worker with a coding agent
+
+The reference worker makes the security boundary and acceptance deterministic.
+A coding-agent worker can replace it without changing the controller: publish a
+digest-pinned, long-running app whose configured command reads only
+`BARISTA_OBJECTIVE_PATH`, edits the current isolated checkout, and exits. Give
+its model credential directly to that worker app through a separate provider
+secret reference; never put the credential, credential value, or secret name in
+the issue or App Run input. Keep Factory's repository acquisition, patch bounds,
+secret scan, coordinator-owned acceptance, runner-owned delivery, and cleanup
+unchanged. Set `BARISTA_FACTORY_WORKER_APP` and the JSON argv in
+`BARISTA_FACTORY_WORKER_COMMAND` to the reviewed replacement.
+
+## Run the demo
+
+1. Open a GitHub issue in the disposable repository.
+2. GitHub receives `202` after signature, event, action, repository, issue URL,
+   and delivery-ID validation; processing continues asynchronously.
+3. Inspect `GET /runs/X-GitHub-Delivery` or the issue comment.
+4. Review the draft PR. Its body includes a patch digest marker used for retry
+   convergence.
+5. Confirm the App Run owning session and successful worker sessions are gone.
+
+For an opt-in real-GitHub acceptance against the running public controller:
+
+```sh
+uv run barista-github-demo accept \
+  --controller-url https://PUBLIC_HOST \
+  --output github-factory-live-evidence.json
+```
+
+This creates a real issue, waits by issue identity, verifies the draft flag,
+exact base/head, patch marker, canonical Factory result digest, and owning-session
+absence, then writes non-secret evidence. It is intentionally not part of CI.
+
+Factory/session failures and pre-delivery verification failures are recorded as
+`failed` and preserve the owning session for bounded operator forensics. A
+controller restart re-dispatches durable `accepted` or `running` rows. Stable
+run and `barista/issue-N` branch identities plus forge-side marker checks prevent
+retry-created duplicate sessions or pull requests.
+
+## Teardown
+
+Delete the webhook while keeping the disposable repository:
+
+```sh
+export GH_TOKEN='...bootstrap token...'
+uv run barista-github-demo teardown
+```
+
+Or explicitly delete both:
+
+```sh
+uv run barista-github-demo teardown --delete-repository --yes-really-delete
+```
+
+Provider app uninstallation is intentionally separate because existing sessions
+or other demos may reference an installed identity.
+
+## Tests
+
+```sh
+uv run --extra test pytest -q
+cd ../../apps/github-issue-worker && uv run --extra test pytest -q
+cd ../factory && uv run --extra test pytest -q
+```
