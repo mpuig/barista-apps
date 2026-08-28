@@ -430,8 +430,9 @@
       "required": ["name", "ref"],
       "properties": {
         "name": {
-          "description": "Environment/logical name the workload sees.",
-          "type": "string"
+          "description": "Environment/logical name the workload sees. BARISTA_APP_SESSION_ID is provider-reserved and cannot be a secret channel.",
+          "type": "string",
+          "not": { "const": "BARISTA_APP_SESSION_ID" }
         },
         "ref": {
           "description": "Provider-resolvable reference (a scheme URI such as secret://, grant://, ref://, vault://, or env://). NEVER a plaintext value — the pattern rejects a bare credential.",

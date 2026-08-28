@@ -18,6 +18,17 @@ manifest's digest-pinned workload identity.
 - **WHEN** an operation accepts a namespaced Git repository binding and app-specific input media type
 - **THEN** a provider preserves and delivers them without needing to understand Git or the input document
 
+### Requirement: A manifest SHALL NOT claim provider-reserved App Run context
+
+An App Manifest SHALL NOT declare `BARISTA_APP_SESSION_ID` as a secret channel
+or otherwise require a caller value for it. The provider alone injects that
+non-secret opaque handle after allocating the app's session.
+
+#### Scenario: secret channel collides with owning-session context
+
+- **WHEN** a manifest declares a secret whose environment name is `BARISTA_APP_SESSION_ID`
+- **THEN** installation is refused before a session or secret is created
+
 ### Requirement: Run declarations SHALL be additive to existing manifests
 
 The `runs` declaration SHALL be optional. A manifest without it SHALL retain its
