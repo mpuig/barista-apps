@@ -30,7 +30,9 @@
       },
       "outputs": {
         "result": {
-          "kinds": ["sh.barista.artifact"],
+          "kinds": [
+            "sh.barista.artifact"
+          ],
           "required": true
         }
       }
@@ -44,9 +46,17 @@
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "additionalProperties": false,
-          "required": ["worker_app", "tasks", "acceptance"],
+          "required": [
+            "worker_app",
+            "tasks",
+            "acceptance"
+          ],
           "properties": {
-            "worker_app": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 80},
+            "worker_app": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "maxLength": 80
+            },
             "tasks": {
               "type": "array",
               "minItems": 1,
@@ -54,14 +64,25 @@
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["id", "command"],
+                "required": [
+                  "id",
+                  "command"
+                ],
                 "properties": {
-                  "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 40},
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$",
+                    "maxLength": 40
+                  },
                   "command": {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 128,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 8192}
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    }
                   }
                 }
               }
@@ -69,51 +90,355 @@
             "acceptance": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["command"],
+              "required": [
+                "command"
+              ],
               "properties": {
                 "command": {
                   "type": "array",
                   "minItems": 1,
                   "maxItems": 128,
-                  "items": {"type": "string", "minLength": 1, "maxLength": 8192}
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
                 },
                 "files": {
                   "type": "object",
                   "maxProperties": 32,
-                  "propertyNames": {"type": "string", "minLength": 1, "maxLength": 512},
-                  "additionalProperties": {"type": "string", "maxLength": 1048576}
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 1048576
+                  }
                 }
               }
             },
-            "concurrency": {"type": "integer", "minimum": 1, "maximum": 16},
-            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
-            "workspace_max_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456},
-            "patch_max_bytes": {"type": "integer", "minimum": 1, "maximum": 16777216},
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "workspace_max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 268435456
+            },
+            "patch_max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216
+            },
             "branch": {
               "type": "string",
               "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$",
               "maxLength": 200
             },
-            "commit_message": {"type": "string", "minLength": 1, "maxLength": 500},
-            "title": {"type": "string", "minLength": 1, "maxLength": 500},
-            "body": {"type": "string", "maxLength": 65536}
+            "commit_message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "body": {
+              "type": "string",
+              "maxLength": 65536
+            }
           }
         }
       },
       "bindings": {
-        "workspace": {"kinds": ["sh.barista.git.repository"], "required": true},
+        "workspace": {
+          "kinds": [
+            "sh.barista.git.repository"
+          ],
+          "required": true
+        },
         "objective": {
-          "kinds": ["sh.barista.text", "sh.barista.specification", "com.github.issue"],
+          "kinds": [
+            "sh.barista.text",
+            "sh.barista.specification",
+            "com.github.issue"
+          ],
           "required": true
         }
       },
       "outputs": {
-        "patch": {"kinds": ["sh.barista.git.patch"], "required": true},
-        "branch": {"kinds": ["sh.barista.git.branch"], "required": false},
-        "change": {"kinds": ["com.github.draft-pull-request"], "required": false}
+        "patch": {
+          "kinds": [
+            "sh.barista.git.patch"
+          ],
+          "required": true
+        },
+        "branch": {
+          "kinds": [
+            "sh.barista.git.branch"
+          ],
+          "required": false
+        },
+        "change": {
+          "kinds": [
+            "com.github.draft-pull-request"
+          ],
+          "required": false
+        }
       },
       "deliveries": {
-        "change": {"kinds": ["com.github.draft-pull-request"]}
+        "change": {
+          "kinds": [
+            "com.github.draft-pull-request"
+          ]
+        }
+      }
+    },
+    "issue-sdlc": {
+      "description": "Triage a GitHub issue in an isolated child, request clarification when needed, or implement and independently verify a draft candidate.",
+      "lifecycle": "coordinator",
+      "input": {
+        "media_type": "application/json",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "triage_app",
+            "triage",
+            "attempt",
+            "worker_app",
+            "tasks",
+            "acceptance"
+          ],
+          "properties": {
+            "worker_app": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "maxLength": 80
+            },
+            "tasks": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "command"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$",
+                    "maxLength": 40
+                  },
+                  "command": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    }
+                  }
+                }
+              }
+            },
+            "acceptance": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "command"
+              ],
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "files": {
+                  "type": "object",
+                  "maxProperties": 32,
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 1048576
+                  }
+                }
+              }
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "workspace_max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 268435456
+            },
+            "patch_max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$",
+              "maxLength": 200
+            },
+            "commit_message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "body": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "triage_app": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "maxLength": 80
+            },
+            "triage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "command"
+              ],
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                }
+              }
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "answers": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "comment_id",
+                  "body"
+                ],
+                "properties": {
+                  "comment_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  },
+                  "prior_result_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "bindings": {
+        "workspace": {
+          "kinds": [
+            "sh.barista.git.repository"
+          ],
+          "required": true
+        },
+        "objective": {
+          "kinds": [
+            "com.github.issue"
+          ],
+          "required": true
+        }
+      },
+      "outputs": {
+        "patch": {
+          "kinds": [
+            "sh.barista.git.patch"
+          ],
+          "required": false
+        },
+        "branch": {
+          "kinds": [
+            "sh.barista.git.branch"
+          ],
+          "required": false
+        },
+        "change": {
+          "kinds": [
+            "com.github.draft-pull-request"
+          ],
+          "required": false
+        },
+        "question": {
+          "kinds": [
+            "com.github.issue-question"
+          ],
+          "required": false
+        }
+      },
+      "deliveries": {
+        "change": {
+          "kinds": [
+            "com.github.draft-pull-request"
+          ]
+        },
+        "question": {
+          "kinds": [
+            "com.github.issue-comment"
+          ]
+        }
       }
     }
   },

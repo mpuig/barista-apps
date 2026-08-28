@@ -186,8 +186,51 @@ def test_authorized_answer_resumes_one_fresh_attempt_and_deduplicates(tmp_path):
     assert second.answer_comment_id == 101
     assert second.answer == "Keep v1 compatible."
     assert second.prior_result_digest == "sha256:" + "2" * 64
+    assert second.answers == (
+        {
+            "comment_id": 101,
+            "body": "Keep v1 compatible.",
+            "prior_result_digest": "sha256:" + "2" * 64,
+        },
+    )
     assert final["attempt"] == 2
+    assert final["answer_count"] == 1
     controller.close()
+
+
+def test_multiple_clarifications_preserve_bounded_correlated_answer_history(tmp_path):
+    selected = config(tmp_path)
+    store = DeliveryStore(selected.database)
+    claim = store.claim(
+        delivery_id="issue-opened",
+        repository=selected.repository,
+        issue_number=7,
+        issue_uri=selected.repository + "/issues/7",
+        run_name="github-62924231c5-issue-7-attempt-1",
+    )
+    for attempt, comment_id in ((1, 101), (2, 102)):
+        store.await_input(
+            claim.delivery_id,
+            {
+                "workflow_state": "needs_input",
+                "question_digest": "sha256:" + str(attempt) * 64,
+                "factory_result_digest": "sha256:" + str(attempt + 2) * 64,
+            },
+        )
+        claim, disposition = store.accept_answer(
+            delivery_id=f"answer-{attempt}",
+            repository=selected.repository,
+            issue_number=7,
+            comment_id=comment_id,
+            answer=f"answer {attempt}",
+            run_name_prefix="github-62924231c5-issue-7",
+        )
+        assert disposition == "accepted"
+        assert claim is not None
+    assert claim.attempt == 3
+    assert [answer["comment_id"] for answer in claim.answers] == [101, 102]
+    assert claim.answers[1]["prior_result_digest"] == "sha256:" + "4" * 64
+    store.close()
 
 
 def test_unauthorized_bot_self_and_stale_comments_are_inert(tmp_path):

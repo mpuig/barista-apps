@@ -324,6 +324,10 @@ def setup_demo(
     factory_name: str,
     factory_image: str,
     factory_digest: str,
+    triage_manifest: Path,
+    triage_name: str,
+    triage_image: str,
+    triage_digest: str,
     worker_manifest: Path,
     worker_name: str,
     worker_image: str,
@@ -367,6 +371,12 @@ def setup_demo(
         for declaration in factory_permissions.get("secrets", [])
         if declaration.get("name") == "BARISTA_HOST_API_TOKEN"
     ]
+    triage = _load_manifest(
+        triage_manifest,
+        name=triage_name,
+        image=triage_image,
+        digest=triage_digest,
+    )
     worker = _load_manifest(
         worker_manifest,
         name=worker_name,
@@ -393,6 +403,8 @@ def setup_demo(
         "webhook_url": webhook_url,
         "factory_app": f"{factory_name}@{factory['version']}",
         "factory_workload_digest": factory_digest,
+        "triage_app": triage_name,
+        "triage_workload_digest": triage_digest,
         "worker_app": worker_name,
         "worker_workload_digest": worker_digest,
     }
@@ -403,6 +415,7 @@ def setup_demo(
     host = client or BaristaClient(Config.from_env())
     try:
         host.install_app(factory, idempotency_key=f"github-demo-install-{factory_name}")
+        host.install_app(triage, idempotency_key=f"github-demo-install-{triage_name}")
         host.install_app(worker, idempotency_key=f"github-demo-install-{worker_name}")
     finally:
         if own_client:

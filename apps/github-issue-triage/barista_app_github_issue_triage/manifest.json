@@ -1,0 +1,19 @@
+{
+  "schema_version": "v1alpha1",
+  "name": "github-issue-triage",
+  "version": "0.1.0",
+  "description": "Deterministic bounded triage worker for issue-driven Factory attempts.",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-github-issue-triage:0.1.0",
+    "digest": "sha256:6a9d13a4c07993ec99bf6041083bc559bbc82935686d8a038bc5e756f0e421c8",
+    "architectures": ["aarch64", "x86_64"],
+    "entrypoint": ["/bin/sh", "-c", "sleep infinity"],
+    "working_dir": "/work",
+    "readiness": {"type": "none"}
+  },
+  "metadata": {
+    "sh.barista.github-factory-demo": {
+      "command": ["/usr/local/bin/barista-demo-issue-triage"]
+    }
+  }
+}

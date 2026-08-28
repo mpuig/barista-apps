@@ -45,6 +45,11 @@ def test_issue_claim_compiles_to_one_runner_owned_factory_run(tmp_path: Path):
             "ref": "main",
         },
     }
+    assert document["operation"] == "issue-sdlc"
+    assert document["input"]["value"]["attempt"] == 1
+    assert document["input"]["value"]["triage_app"] == "github-issue-triage"
+    assert document["input"]["value"]["answers"] == []
+    assert document["deliveries"]["question"]["target"] == claim.issue_uri
     assert document["deliveries"]["change"]["options"]["executor"] == "runner"
     assert document["deliveries"]["change"]["target"] == config.repository
     assert document["input"]["value"]["tasks"] == [

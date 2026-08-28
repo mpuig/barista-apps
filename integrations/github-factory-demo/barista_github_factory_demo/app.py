@@ -129,6 +129,7 @@ def create_app(
             "ok": True,
             "repository": selected.full_name,
             "factory_app": selected.factory_app,
+            "triage_app": selected.triage_app,
             "worker_app": selected.worker_app,
         }
 

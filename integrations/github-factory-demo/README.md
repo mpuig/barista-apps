@@ -38,6 +38,9 @@ From the repository root:
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f apps/factory/Dockerfile -t REGISTRY/barista-factory:github-demo --push .
 docker buildx build --platform linux/amd64,linux/arm64 \
+  -f apps/github-issue-triage/Dockerfile \
+  -t REGISTRY/barista-github-issue-triage:0.1.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
   -f apps/github-issue-worker/Dockerfile \
   -t REGISTRY/barista-github-issue-worker:0.1.0 --push .
 # Record registry-reported sha256 index digests. Tags are not executable identity.
@@ -124,7 +127,9 @@ uv run barista-github-demo setup \
   --webhook-url https://PUBLIC_HOST/webhooks/github \
   --factory-image REGISTRY/barista-factory:github-demo \
   --factory-digest sha256:... \
-  --worker-image REGISTRY/barista-github-issue-worker:0.1.0 \
+  --triage-image REGISTRY/barista-github-issue-triage:0.1.0 \
+  --triage-digest sha256:... \
+  --worker-image REGISTRY/barista-github-issue-worker:0.2.0 \
   --worker-digest sha256:...
 ```
 
@@ -141,6 +146,7 @@ unset GH_TOKEN
 export BARISTA_GITHUB_TOKEN='...one-repository runtime token...'
 export BARISTA_GITHUB_REPOSITORY='https://github.com/OWNER/barista-factory-demo'
 export BARISTA_FACTORY_APP='github-demo-factory@0.1.0'
+export BARISTA_FACTORY_TRIAGE_APP='github-issue-triage'
 export BARISTA_FACTORY_WORKER_APP='github-issue-worker'
 # Optional comma-separated trusted responders; defaults to the repository owner.
 export BARISTA_GITHUB_AUTHORIZED_RESPONDERS='OWNER'

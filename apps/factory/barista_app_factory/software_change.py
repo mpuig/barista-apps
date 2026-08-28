@@ -380,6 +380,8 @@ def execute_software_change(
     *,
     forge: ForgeAdapter | None = None,
     work_root: str | Path = "/work/app-runs",
+    register_result: bool = True,
+    objective_context: Mapping[str, Any] | None = None,
 ) -> AppRunResult:
     """Coordinate isolated patches, integrate, independently check, and deliver."""
     manifest = load_manifest()
@@ -474,7 +476,15 @@ def execute_software_change(
                     "issue objective belongs to a different repository",
                     "factory.objective_repository_scope",
                 )
-            objective_bytes = canonical_bytes(issue.objective()["content"])
+            objective_content = dict(issue.objective()["content"])
+            if objective_context is not None:
+                objective_content["factory_context"] = dict(objective_context)
+            objective_bytes = canonical_bytes(objective_content)
+            if len(objective_bytes) > OBJECTIVE_LIMIT:
+                raise _invalid(
+                    "resolved objective context exceeds the supported bound",
+                    "factory.objective_too_large",
+                )
             bindings["objective"] = issue.to_result_binding()
         else:  # validate_run closes this, kept fail-closed for direct callers.
             raise _invalid("unsupported objective binding", "factory.objective_kind")
@@ -672,5 +682,6 @@ def execute_software_change(
     if error:
         document["error"] = {"code": error[0], "message": error[1]}
     result = AppRunResult.parse(document)
-    register_app_run_result(client, result)
+    if register_result:
+        register_app_run_result(client, result)
     return result

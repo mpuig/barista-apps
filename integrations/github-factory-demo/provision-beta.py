@@ -65,6 +65,7 @@ def provision(
             _environment_line("BARISTA_GITHUB_WEBHOOK_SECRET", webhook_secret),
             _environment_line("BARISTA_GITHUB_TOKEN", github_token),
             _environment_line("BARISTA_FACTORY_APP", "github-demo-factory@0.1.0"),
+            _environment_line("BARISTA_FACTORY_TRIAGE_APP", "github-issue-triage"),
             _environment_line("BARISTA_FACTORY_WORKER_APP", "github-issue-worker"),
             _environment_line("BARISTA_GITHUB_BASE_REF", "main"),
             _environment_line("BARISTA_HOST_API_ENDPOINT", "https://beta.barista.sh"),

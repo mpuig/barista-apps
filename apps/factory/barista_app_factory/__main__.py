@@ -236,16 +236,20 @@ def main(argv: list[str] | None = None) -> int:
     # select the repository-backed operation.
     typed_run = None if mission_was_explicit else _typed_app_run()
 
-    if typed_run is not None and typed_run.operation == "software-change":
+    if typed_run is not None and typed_run.operation in {"software-change", "issue-sdlc"}:
         from barista_app_sdk import GitHubForge
 
+        from .issue_sdlc import execute_issue_sdlc
         from .software_change import execute_software_change
 
         config = _load_config(args.endpoint, args.token_env)
         print("coordinator ready", flush=True)  # readiness log line (see manifest)
         forge = GitHubForge(token=os.environ.get("GITHUB_TOKEN"))
         with BaristaClient(config) as client:
-            app_result = execute_software_change(client, typed_run, forge=forge)
+            if typed_run.operation == "issue-sdlc":
+                app_result = execute_issue_sdlc(client, typed_run, forge=forge)
+            else:
+                app_result = execute_software_change(client, typed_run, forge=forge)
         document = app_result.to_document()
         print(json.dumps(document, sort_keys=True, separators=(",", ":")), flush=True)
         hold_app_run_result()

@@ -1,0 +1,23 @@
+[project]
+name = "barista-app-github-issue-triage"
+version = "0.1.0"
+description = "Deterministic bounded triage worker for the GitHub Factory reference."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+barista-demo-issue-triage = "barista_app_github_issue_triage.triage:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "ruff>=0.9"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_github_issue_triage"]
+artifacts = ["barista_app_github_issue_triage/manifest.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

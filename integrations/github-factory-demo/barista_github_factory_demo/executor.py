@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import re
 import time
@@ -25,7 +26,11 @@ from barista_app_sdk.content import canonical_bytes, content_id
 from barista_app_sdk.errors import ResultIntegrityError, TerminalError
 from barista_app_sdk.sensitive import assert_no_high_confidence_secrets
 
-from .config import ControllerConfig, worker_command_from_env
+from .config import (
+    ControllerConfig,
+    triage_command_from_env,
+    worker_command_from_env,
+)
 from .store import Claim
 
 ACCEPTANCE_SCRIPT = """from pathlib import Path
@@ -75,10 +80,14 @@ def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
         "schema_version": "v1alpha1",
         "name": run_name,
         "app": config.factory_app,
-        "operation": "software-change",
+        "operation": "issue-sdlc",
         "input": {
             "media_type": "application/json",
             "value": {
+                "triage_app": config.triage_app,
+                "triage": {"command": triage_command_from_env()},
+                "attempt": claim.attempt,
+                "answers": [dict(answer) for answer in claim.answers],
                 "worker_app": config.worker_app,
                 "tasks": [{"id": "issue", "command": worker_command_from_env()}],
                 "acceptance": {
@@ -119,7 +128,12 @@ def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
                     "head_branch": branch,
                     "executor": "runner",
                 },
-            }
+            },
+            "question": {
+                "kind": "com.github.issue-comment",
+                "target": claim.issue_uri,
+                "options": {"executor": "runner"},
+            },
         },
         "metadata": {
             "sh.barista.github-webhook": {
@@ -165,6 +179,90 @@ def _capture(
             code="github_demo.output_incomplete",
         )
     return bytes(output)
+
+
+def read_verified_question(
+    client,
+    session_id: str,
+    *,
+    uri: str,
+    expected_digest: str,
+    expected_size: int,
+    expected_run: str,
+    expected_issue: str,
+    expected_attempt: int,
+) -> dict:
+    parsed = urlparse(uri)
+    pure_path = PurePosixPath(unquote(parsed.path))
+    expected_path = PurePosixPath("/work/triage-runs") / expected_run / "question.json"
+    if (
+        parsed.scheme != "file"
+        or parsed.netloc
+        or pure_path != expected_path
+        or ".." in pure_path.parts
+        or expected_size < 1
+        or expected_size > 64 * 1024
+    ):
+        raise ResultIntegrityError(
+            "Factory question URI or size is invalid", code="github_demo.question_uri"
+        )
+    raw = _capture(client, session_id, ["cat", str(pure_path)])
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if len(raw) != expected_size or digest != expected_digest:
+        raise ResultIntegrityError(
+            "Factory question bytes failed verification",
+            code="github_demo.question_integrity",
+        )
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ResultIntegrityError(
+            "Factory question is not UTF-8 JSON", code="github_demo.question_document"
+        ) from exc
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"schema_version", "kind", "issue", "attempt", "questions"}
+        or document.get("schema_version") != "v1alpha1"
+        or document.get("kind") not in {"clarification", "failure"}
+        or document.get("issue") != expected_issue
+        or document.get("attempt") != expected_attempt
+        or raw != canonical_bytes(document)
+    ):
+        raise ResultIntegrityError(
+            "Factory question identity is invalid", code="github_demo.question_document"
+        )
+    questions = document.get("questions")
+    if (
+        not isinstance(questions, list)
+        or not 1 <= len(questions) <= 5
+        or any(
+            not isinstance(question, str)
+            or not question.strip()
+            or len(question) > 1000
+            for question in questions
+        )
+    ):
+        raise ResultIntegrityError(
+            "Factory questions are outside the supported bound",
+            code="github_demo.question_document",
+        )
+    assert_no_high_confidence_secrets(raw.decode("utf-8"))
+    return document
+
+
+def _persist_final(config: ControllerConfig, run: AppRun, final: dict) -> None:
+    path = config.result_directory.expanduser().resolve() / f"{run.name}.json"
+    _atomic_write(path, canonical_bytes(final))
+
+
+def _cleanup(client, session_id: str, run: AppRun) -> None:
+    cleanup = client.delete_session(
+        session_id,
+        idempotency_key=f"github-demo-cleanup-{run.content_id().split(':', 1)[1]}",
+    )
+    operation = getattr(cleanup, "operation_id", None) or getattr(cleanup, "id", None)
+    if operation:
+        client.wait_operation(operation, timeout=120)
 
 
 def read_verified_patch(
@@ -247,6 +345,55 @@ def read_verified_patch(
     return PatchArtifact(data=raw, digest=digest, size_bytes=len(raw))
 
 
+def _verified_repository(result: dict, claim: Claim, config: ControllerConfig):
+    result_bindings = result.get("bindings", {})
+    objective = result_bindings.get("objective") or {}
+    objective_metadata = objective.get("metadata") or {}
+    if (
+        objective.get("kind") != "com.github.issue"
+        or objective.get("uri") != claim.issue_uri
+        or objective_metadata.get("repository_uri") != config.repository
+        or objective_metadata.get("number") != claim.issue_number
+    ):
+        raise ResultIntegrityError(
+            "Factory result changed objective identity",
+            code="github_demo.objective_identity",
+        )
+    binding = result_bindings.get("workspace") or {}
+    if (
+        binding.get("kind") != "sh.barista.git.repository"
+        or binding.get("uri") != config.repository
+        or binding.get("requested_ref") != config.base_ref
+    ):
+        raise ResultIntegrityError(
+            "Factory result changed repository scope",
+            code="github_demo.repository_identity",
+        )
+    base_commit = str(binding.get("resolved_identity", ""))
+    if not re.fullmatch(r"[0-9a-f]{40}", base_commit):
+        raise ResultIntegrityError(
+            "Factory result has no exact Git base", code="github_demo.base_missing"
+        )
+    repository_metadata = binding.get("metadata") or {}
+    repository_size = int(repository_metadata.get("size_bytes", -1))
+    submodules = str(repository_metadata.get("submodules", ""))
+    lfs = str(repository_metadata.get("lfs", ""))
+    if repository_size < 0 or submodules != "none" or lfs != "none":
+        raise ResultIntegrityError(
+            "Factory result selected an unsupported repository graph",
+            code="github_demo.repository_graph",
+        )
+    return ResolvedGitRepository(
+        uri=config.repository,
+        requested_ref=config.base_ref,
+        commit=base_commit,
+        workspace=Path("/unavailable-in-runner"),
+        size_bytes=repository_size,
+        submodules=submodules,
+        lfs=lfs,
+    )
+
+
 class FactoryRunExecutor:
     def __init__(
         self,
@@ -314,12 +461,117 @@ class FactoryRunExecutor:
                     details={"state": result["state"], "error": result.get("error")},
                     error_class="terminal",
                 )
-            delivery = run.deliveries["change"]
-            pending = (
-                (result.get("metadata") or {})
-                .get("pending_deliveries", {})
-                .get("change")
+            repository = _verified_repository(result, claim, self.config)
+            factory_digest = collected.result.content_id()
+            workflow_state = str(
+                (result.get("metadata") or {}).get(
+                    "workflow_state", "verified_for_review"
+                )
             )
+            if workflow_state == "refused":
+                if result.get("outputs") or (result.get("metadata") or {}).get(
+                    "pending_deliveries"
+                ):
+                    raise ResultIntegrityError(
+                        "refused result requested a delivery",
+                        code="github_demo.refused_delivery",
+                    )
+                final = {
+                    "schema_version": "v1alpha1",
+                    "delivery_id": claim.delivery_id,
+                    "run": run.name,
+                    "issue": claim.issue_uri,
+                    "workflow_state": "refused",
+                    "factory_result_digest": factory_digest,
+                    "reason": (result.get("metadata") or {}).get("refusal"),
+                }
+                _persist_final(self.config, run, final)
+                _cleanup(client, session.id, run)
+                return final
+            if workflow_state == "needs_input":
+                delivery = run.deliveries["question"]
+                pending_deliveries = (result.get("metadata") or {}).get(
+                    "pending_deliveries", {}
+                )
+                if not isinstance(pending_deliveries, dict) or set(
+                    pending_deliveries
+                ) != {"question"}:
+                    raise ResultIntegrityError(
+                        "question result requested an unexpected delivery",
+                        code="github_demo.question_delivery_identity",
+                    )
+                pending = pending_deliveries.get("question")
+                if (
+                    not isinstance(pending, dict)
+                    or pending.get("kind") != delivery.kind
+                    or pending.get("target") != delivery.target
+                    or pending.get("request_digest")
+                    != content_id(delivery.to_document())
+                ):
+                    raise ResultIntegrityError(
+                        "Factory result changed question delivery identity",
+                        code="github_demo.question_delivery_identity",
+                    )
+                question_output = result.get("outputs", {}).get("question")
+                if (
+                    not isinstance(question_output, dict)
+                    or question_output.get("kind") != "com.github.issue-question"
+                    or question_output.get("media_type") != "application/json"
+                ):
+                    raise ResultIntegrityError(
+                        "Factory result has no typed question",
+                        code="github_demo.question_missing",
+                    )
+                question = read_verified_question(
+                    client,
+                    session.id,
+                    uri=str(question_output.get("uri", "")),
+                    expected_digest=str(question_output.get("digest", "")),
+                    expected_size=int(
+                        (question_output.get("metadata") or {}).get("size_bytes", -1)
+                    ),
+                    expected_run=run.name,
+                    expected_issue=claim.issue_uri,
+                    expected_attempt=claim.attempt,
+                )
+                question_digest = str(question_output["digest"])
+                body = "Barista Factory needs input before continuing:\n\n" + "\n".join(
+                    f"{index}. {text}"
+                    for index, text in enumerate(question["questions"], 1)
+                )
+                body += f"\n\n<!-- barista-factory-question:{question_digest} -->"
+                comment = self.forge.create_issue_comment(claim.issue_uri, body)
+                final = {
+                    "schema_version": "v1alpha1",
+                    "delivery_id": claim.delivery_id,
+                    "run": run.name,
+                    "issue": claim.issue_uri,
+                    "workflow_state": "needs_input",
+                    "factory_result_digest": factory_digest,
+                    "question_digest": question_digest,
+                    "comment": comment,
+                }
+                _persist_final(self.config, run, final)
+                _cleanup(client, session.id, run)
+                return final
+            if workflow_state != "verified_for_review":
+                raise ResultIntegrityError(
+                    "Factory result has an unknown workflow state",
+                    code="github_demo.workflow_state",
+                )
+
+            delivery = run.deliveries["change"]
+            pending_deliveries = (result.get("metadata") or {}).get(
+                "pending_deliveries", {}
+            )
+            if not isinstance(pending_deliveries, dict) or set(pending_deliveries) != {
+                "change"
+            }:
+                raise ResultIntegrityError(
+                    "verified result requested an unexpected delivery",
+                    code="github_demo.delivery_identity",
+                )
+            pending = pending_deliveries.get("change")
             if (
                 not isinstance(pending, dict)
                 or pending.get("kind") != delivery.kind
@@ -346,53 +598,7 @@ class FactoryRunExecutor:
                 max_bytes=self.config.max_patch_bytes,
                 expected_run=run.name,
             )
-            result_bindings = result.get("bindings", {})
-            objective = result_bindings.get("objective") or {}
-            objective_metadata = objective.get("metadata") or {}
-            if (
-                objective.get("kind") != "com.github.issue"
-                or objective.get("uri") != claim.issue_uri
-                or objective_metadata.get("repository_uri") != self.config.repository
-                or objective_metadata.get("number") != claim.issue_number
-            ):
-                raise ResultIntegrityError(
-                    "Factory result changed objective identity",
-                    code="github_demo.objective_identity",
-                )
-            binding = result_bindings.get("workspace") or {}
-            if (
-                binding.get("kind") != "sh.barista.git.repository"
-                or binding.get("uri") != self.config.repository
-                or binding.get("requested_ref") != self.config.base_ref
-            ):
-                raise ResultIntegrityError(
-                    "Factory result changed repository scope",
-                    code="github_demo.repository_identity",
-                )
-            base_commit = str(binding.get("resolved_identity", ""))
-            if not re.fullmatch(r"[0-9a-f]{40}", base_commit):
-                raise ResultIntegrityError(
-                    "Factory result has no exact Git base",
-                    code="github_demo.base_missing",
-                )
-            repository_metadata = binding.get("metadata") or {}
-            repository_size = int(repository_metadata.get("size_bytes", -1))
-            submodules = str(repository_metadata.get("submodules", ""))
-            lfs = str(repository_metadata.get("lfs", ""))
-            if repository_size < 0 or submodules != "none" or lfs != "none":
-                raise ResultIntegrityError(
-                    "Factory result selected an unsupported repository graph",
-                    code="github_demo.repository_graph",
-                )
-            repository = ResolvedGitRepository(
-                uri=self.config.repository,
-                requested_ref=self.config.base_ref,
-                commit=base_commit,
-                workspace=Path("/unavailable-in-runner"),
-                size_bytes=repository_size,
-                submodules=submodules,
-                lfs=lfs,
-            )
+            base_commit = repository.commit
             change = deliver_draft_change(
                 delivery,
                 adapter=self.forge,
@@ -402,12 +608,13 @@ class FactoryRunExecutor:
                 title=str(run.input_value["title"]),
                 body=str(run.input_value["body"]),
             )
-            factory_digest = collected.result.content_id()
             final = {
                 "schema_version": "v1alpha1",
                 "delivery_id": claim.delivery_id,
                 "run": run.name,
                 "issue": claim.issue_uri,
+                "workflow_state": "verified_for_review",
+                "verified_for_review": True,
                 "factory_result_digest": factory_digest,
                 "base_commit": base_commit,
                 "patch_digest": patch.digest,
@@ -421,17 +628,6 @@ class FactoryRunExecutor:
                 )
             except TerminalError:
                 final["comment"] = "not-created"
-            final_path = (
-                self.config.result_directory.expanduser().resolve() / f"{run.name}.json"
-            )
-            _atomic_write(final_path, canonical_bytes(final))
-            cleanup = client.delete_session(
-                session.id,
-                idempotency_key=f"github-demo-cleanup-{run.content_id().split(':', 1)[1]}",
-            )
-            cleanup_operation = getattr(cleanup, "operation_id", None) or getattr(
-                cleanup, "id", None
-            )
-            if cleanup_operation:
-                client.wait_operation(cleanup_operation, timeout=120)
+            _persist_final(self.config, run, final)
+            _cleanup(client, session.id, run)
             return final

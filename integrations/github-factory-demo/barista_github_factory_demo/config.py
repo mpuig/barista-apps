@@ -25,6 +25,7 @@ class ControllerConfig:
     webhook_secret: str
     github_token: str
     factory_app: str = "factory@0.1.0"
+    triage_app: str = "github-issue-triage"
     worker_app: str = "github-issue-worker"
     base_ref: str = "main"
     database: Path = Path("github-factory-demo.sqlite3")
@@ -89,6 +90,9 @@ class ControllerConfig:
             webhook_secret=_required("BARISTA_GITHUB_WEBHOOK_SECRET"),
             github_token=_required("BARISTA_GITHUB_TOKEN"),
             factory_app=os.environ.get("BARISTA_FACTORY_APP", "factory@0.1.0"),
+            triage_app=os.environ.get(
+                "BARISTA_FACTORY_TRIAGE_APP", "github-issue-triage"
+            ),
             worker_app=os.environ.get(
                 "BARISTA_FACTORY_WORKER_APP", "github-issue-worker"
             ),
@@ -114,6 +118,7 @@ class ControllerConfig:
         return {
             "repository": self.repository,
             "factory_app": self.factory_app,
+            "triage_app": self.triage_app,
             "worker_app": self.worker_app,
             "base_ref": self.base_ref,
             "database": str(self.database),
@@ -126,13 +131,22 @@ class ControllerConfig:
         }
 
 
+DEFAULT_TRIAGE_COMMAND = ["/usr/local/bin/barista-demo-issue-triage"]
 DEFAULT_WORKER_COMMAND = ["/usr/local/bin/barista-demo-issue-worker"]
 
 
+def triage_command_from_env() -> list[str]:
+    return _command_from_env("BARISTA_FACTORY_TRIAGE_COMMAND", DEFAULT_TRIAGE_COMMAND)
+
+
 def worker_command_from_env() -> list[str]:
-    raw = os.environ.get("BARISTA_FACTORY_WORKER_COMMAND")
+    return _command_from_env("BARISTA_FACTORY_WORKER_COMMAND", DEFAULT_WORKER_COMMAND)
+
+
+def _command_from_env(name: str, default: list[str]) -> list[str]:
+    raw = os.environ.get(name)
     if not raw:
-        return list(DEFAULT_WORKER_COMMAND)
+        return list(default)
     value = json.loads(raw)
     if (
         not isinstance(value, list)
@@ -142,7 +156,5 @@ def worker_command_from_env() -> list[str]:
             not isinstance(item, str) or not item or len(item) > 8192 for item in value
         )
     ):
-        raise ValueError(
-            "BARISTA_FACTORY_WORKER_COMMAND must be a bounded JSON argv array"
-        )
+        raise ValueError(f"{name} must be a bounded JSON argv array")
     return value

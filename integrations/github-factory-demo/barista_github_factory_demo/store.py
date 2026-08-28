@@ -25,6 +25,7 @@ class Claim:
     answer_comment_id: int | None = None
     answer: str | None = None
     prior_result_digest: str | None = None
+    answers: tuple[dict, ...] = ()
 
 
 class DeliveryStore:
@@ -54,6 +55,7 @@ class DeliveryStore:
                 answer TEXT,
                 prior_result_digest TEXT,
                 question_digest TEXT,
+                answer_history_json TEXT,
                 UNIQUE(repository, issue_number)
             );
             CREATE TABLE IF NOT EXISTS comment_deliveries (
@@ -76,6 +78,7 @@ class DeliveryStore:
             ("answer", "TEXT"),
             ("prior_result_digest", "TEXT"),
             ("question_digest", "TEXT"),
+            ("answer_history_json", "TEXT"),
         ):
             if name not in columns:
                 self._connection.execute(
@@ -206,11 +209,40 @@ class DeliveryStore:
             run_name = f"{run_name_prefix}-attempt-{attempt}"
             prior_result = json.loads(row["result_json"]) if row["result_json"] else {}
             prior = prior_result.get("factory_result_digest")
+            history = (
+                json.loads(row["answer_history_json"])
+                if row["answer_history_json"]
+                else []
+            )
+            if len(history) >= 20 or attempt > 100:
+                self._connection.execute(
+                    "UPDATE comment_deliveries SET disposition = 'answer_limit' WHERE delivery_id = ?",
+                    (delivery_id,),
+                )
+                self._connection.commit()
+                return None, "answer_limit"
+            history.append(
+                {
+                    "comment_id": comment_id,
+                    "body": answer,
+                    **({"prior_result_digest": prior} if prior else {}),
+                }
+            )
+            history_json = json.dumps(history, sort_keys=True, separators=(",", ":"))
             self._connection.execute(
                 """UPDATE deliveries SET status = 'accepted', run_name = ?, attempt = ?,
-                answer_comment_id = ?, answer = ?, prior_result_digest = ?, updated_at = ?
-                WHERE delivery_id = ?""",
-                (run_name, attempt, comment_id, answer, prior, now, row["delivery_id"]),
+                answer_comment_id = ?, answer = ?, prior_result_digest = ?,
+                answer_history_json = ?, updated_at = ? WHERE delivery_id = ?""",
+                (
+                    run_name,
+                    attempt,
+                    comment_id,
+                    answer,
+                    prior,
+                    history_json,
+                    now,
+                    row["delivery_id"],
+                ),
             )
             self._connection.execute(
                 "UPDATE comment_deliveries SET disposition = 'accepted' WHERE delivery_id = ?",
@@ -275,6 +307,11 @@ class DeliveryStore:
             answer_comment_id=row["answer_comment_id"],
             answer=row["answer"],
             prior_result_digest=row["prior_result_digest"],
+            answers=tuple(
+                json.loads(row["answer_history_json"])
+                if row["answer_history_json"]
+                else []
+            ),
             created=created,
         )
 
@@ -290,6 +327,11 @@ class DeliveryStore:
             "run_name": row["run_name"],
             "attempt": int(row["attempt"]),
             "answer_comment_id": row["answer_comment_id"],
+            "answer_count": len(
+                json.loads(row["answer_history_json"])
+                if row["answer_history_json"]
+                else []
+            ),
             "prior_result_digest": row["prior_result_digest"],
             "question_digest": row["question_digest"],
             "result": result,

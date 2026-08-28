@@ -82,6 +82,23 @@ delivery and `GITHUB_TOKEN` are present, token-safe draft publication.
 Credentialed private-repository acquisition remains refused by this reference
 operation rather than exposing a token in argv or a clone URL.
 
+## Triage-first issue SDLC
+
+The typed `issue-sdlc` operation runs a separately installed triage app in an
+isolated checkout before any implementation command. Triage returns one closed,
+canonical decision: `ready`, `needs_input`, or `refused`. Factory bounds and
+secret-scans that decision and content-addresses its evidence.
+
+`needs_input` produces only a canonical question artifact and declared
+runner-owned issue-comment request. `refused` produces no delivery. `ready`
+passes the summary, acceptance criteria, and bounded authorized-answer history
+to implementation as inert objective context, then reuses the existing
+software-change integration and independent acceptance boundary. A worker or
+acceptance failure may produce only a static sanitized failure question;
+integrity, authority, secret, and repository-identity failures publish nothing.
+Human waiting occurs outside Factory as a sequence of fresh App Runs, so no
+session or expiring grant spans the wait.
+
 ## How mission coordination behaves
 
 - **One durable coordinator owns mission state** — task graph, worker handles,
