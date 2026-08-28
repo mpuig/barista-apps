@@ -15,7 +15,7 @@
 - Deterministic issue worker: 5 passed.
 - Standalone acceptance: 1 passed, 3 managed tests skipped, 1 opt-in test deselected.
 - Supply-chain and strict OpenSpec checks passed.
-- Draft PR #46 required CI passed for the first commit; the migration-test follow-up reruns the same required suite.
+- Draft PR #46 required CI passed on the current revision (15 jobs).
 
 ## Pending
 
