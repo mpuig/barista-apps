@@ -13,7 +13,7 @@
 
 ## 3. Live deployment
 
-- [ ] 3.1 Merge reviewed Apps and Cloud deployment changes before production mutation.
-- [ ] 3.2 Deploy images, controller source, DNS, and Caddy from clean remote `main` revisions.
-- [ ] 3.3 Provision the user-supplied repository-scoped token, bootstrap the disposable repository, and verify controller health.
-- [ ] 3.4 Run the real issue-to-draft acceptance, record exact evidence, and confirm all ephemeral sessions are gone.
+- [x] 3.1 Merge reviewed Apps and Cloud deployment changes before production mutation.
+- [x] 3.2 Deploy images, controller source, DNS, and Caddy from clean remote `main` revisions.
+- [x] 3.3 Provision the user-supplied repository-scoped token, bootstrap the disposable repository, and verify controller health.
+- [x] 3.4 Run the real issue-to-draft acceptance, record exact evidence, and confirm all ephemeral sessions are gone.
