@@ -12,9 +12,11 @@ from typing import Any
 from .client import BaristaClient
 from .config import Config
 from .errors import HostAPIError
+from .forge import DRAFT_PULL_REQUEST_KIND, GITHUB_ISSUE_KIND
 from .lifecycle import CollectedAppRun
 from .resolution import resolve_app
 from .runs import AppRun, RunOperation, canonical_bytes
+from .sources import GIT_REPOSITORY_KIND
 
 
 def _named_json(values: list[str], label: str) -> dict[str, Any]:
@@ -45,6 +47,39 @@ def _named_strings(values: list[str], label: str) -> dict[str, str]:
             raise ValueError(f"duplicate {label} name {name!r}")
         result[name] = value
     return result
+
+
+def _project_convenience(args, bindings: dict, deliveries: dict) -> None:
+    """Project ergonomic flags into the same generic envelope maps."""
+    if args.repo:
+        if "workspace" in bindings:
+            raise ValueError("--repo conflicts with --bind workspace=...")
+        bindings["workspace"] = {
+            "kind": GIT_REPOSITORY_KIND,
+            "uri": args.repo,
+            **({"ref": args.repo_ref} if args.repo_ref else {}),
+        }
+    if args.issue:
+        if "objective" in bindings:
+            raise ValueError("--issue conflicts with --bind objective=...")
+        bindings["objective"] = {"kind": GITHUB_ISSUE_KIND, "uri": args.issue}
+    if args.publish:
+        if "change" in deliveries:
+            raise ValueError("--publish conflicts with --deliver change=...")
+        target = args.publish_target or args.repo
+        if not target:
+            raise ValueError("--publish requires --publish-target or --repo")
+        delivery = {
+            "kind": DRAFT_PULL_REQUEST_KIND,
+            "target": target,
+            "options": {
+                "base_ref": args.base_ref or args.repo_ref or "main",
+                "head_branch": args.head_branch,
+            },
+        }
+        if args.publish_credential:
+            delivery["credential"] = args.publish_credential
+        deliveries["change"] = delivery
 
 
 def _read_input(source: str) -> Any:
@@ -119,16 +154,21 @@ def _config(args) -> Config:
 def _run(args) -> int:
     if args.detach and args.cleanup:
         raise ValueError("--detach and --cleanup cannot be combined")
-    input_value = _read_input(args.input)
+    input_source = args.mission or args.input
+    input_value = _read_input(input_source)
     bindings = _named_json(args.bind, "binding")
     secrets = _named_strings(args.secret, "secret")
     deliveries = _named_json(args.deliver, "delivery")
+    _project_convenience(args, bindings, deliveries)
 
     with BaristaClient(_config(args)) as client:
         resolved = resolve_app(client, args.app, allow_dirty=args.development)
         manifest = resolved.manifest_document()
         operation = _operation(manifest, args.operation)
-        input_media_type = args.input_media_type or operation.input_media_type
+        projected_media_type = (
+            "application/vnd.barista.factory.mission+json" if args.mission else None
+        )
+        input_media_type = args.input_media_type or projected_media_type or operation.input_media_type
         app_source = {
             "name": resolved.name,
             "version": resolved.version,
@@ -229,7 +269,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--app", required=True, help="Installed app[@version] or local manifest path.")
     run.add_argument("--operation", help="Manifest operation; inferred when exactly one is declared.")
     run.add_argument("--name", help="Stable run/session name; otherwise derived from canonical input.")
-    run.add_argument("--input", required=True, help="JSON input file, or - for stdin.")
+    input_group = run.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--input", help="JSON input file, or - for stdin.")
+    input_group.add_argument(
+        "--mission",
+        help="Factory convenience alias for --input with the Factory mission media type.",
+    )
     run.add_argument("--input-media-type", help="Override only when it matches the operation declaration.")
     run.add_argument(
         "--bind", action="append", default=[], metavar="NAME=JSON",
@@ -239,10 +284,21 @@ def _parser() -> argparse.ArgumentParser:
         "--secret", action="append", default=[], metavar="NAME=REFERENCE",
         help="Reference-only secret alias; raw values are rejected by the App Run contract.",
     )
+    run.add_argument("--repo", help="Bind bindings.workspace as a Git repository.")
+    run.add_argument("--repo-ref", help="Repository ref resolved once by the source adapter.")
+    run.add_argument("--issue", help="Bind bindings.objective as a forge issue.")
     run.add_argument(
         "--deliver", action="append", default=[], metavar="NAME=JSON",
         help="Explicit named delivery request as JSON.",
     )
+    run.add_argument(
+        "--publish", choices=["draft-pr"],
+        help="Explicit convenience delivery; currently projects draft-pr to deliveries.change.",
+    )
+    run.add_argument("--publish-target", help="Delivery repository; defaults to --repo.")
+    run.add_argument("--publish-credential", help="Secret alias used by the delivery adapter.")
+    run.add_argument("--base-ref", help="Delivery base ref; defaults to --repo-ref or main.")
+    run.add_argument("--head-branch", default="barista/change", help="Draft change head branch.")
     run.add_argument("--output", help="Persist verified terminal result bytes at this local path.")
     run.add_argument("--emit-envelope", help="Also write the exact canonical launch envelope here.")
     run.add_argument("--detach", action="store_true", help="Return after idempotent session launch.")

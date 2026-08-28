@@ -19,16 +19,16 @@
 ## 3. Portable runner CLI
 
 - [x] 3.1 Add an OSS runner command that accepts `--app`, `--input`, repeatable `--bind`, `--output`, and cleanup/detach controls and emits the canonical envelope it runs.
-- [ ] 3.2 Add convenience projections for repository, issue, mission, and delivery without creating a second wire shape.
+- [x] 3.2 Add convenience projections for repository, issue, mission, and delivery without creating a second wire shape.
 - [ ] 3.3 Resolve a remote app repository only through an exact revision and valid digest-pinned manifest; require an explicit development mode for building app source.
 - [x] 3.4 Keep the runner provider-neutral so a managed CLI can expose the same behavior as `barista run` without the OSS package importing managed code.
 
 ## 4. Source and forge adapters
 
-- [ ] 4.1 Implement the Git repository binding with one-time commit resolution, provenance, reference-only credentials, explicit submodule/LFS behavior, and provider-derived size limits where available.
-- [ ] 4.2 Implement objective bindings for local text/specification and forge issue content; keep objective content unable to widen run policy.
-- [ ] 4.3 Implement patch/branch output and explicit draft-pull-request delivery behind a source-control/forge adapter rather than the Host API.
-- [ ] 4.4 Add an offline fake forge and dishonest cases: raw token, moving base ref, publication outside the bound repository, and publication after failed verification.
+- [ ] 4.1 Implement the Git repository binding with one-time commit resolution, provenance, reference-only credentials, explicit submodule/LFS behavior, and provider-derived size limits where available. *(Resolution, detached exact checkout, askpass credential handling, submodule/LFS policy, provenance, and bounded materialization are implemented; wiring discovered provider limits and workspace distribution into reference apps remains.)*
+- [x] 4.2 Implement objective bindings for local text/specification and forge issue content; keep objective content unable to widen run policy.
+- [x] 4.3 Implement patch/branch output and explicit draft-pull-request delivery behind a source-control/forge adapter rather than the Host API.
+- [x] 4.4 Add an offline fake forge and dishonest cases: raw token, moving base ref, publication outside the bound repository, and publication after failed verification.
 
 ## 5. Reference app adoption
 

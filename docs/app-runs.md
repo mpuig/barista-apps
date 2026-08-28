@@ -51,6 +51,28 @@ pinned.
 barista-app run --app ./apps/reviewer --input review.json --detach
 ```
 
-Remote app repositories are not cloned or executed implicitly. Until exact
-remote source resolution is implemented, install a validated pinned manifest or
-use a local manifest source.
+Convenience flags are projections, not another protocol. For a manifest that
+declares the corresponding `workspace`, `objective`, and `change` slots:
+
+```sh
+barista-app run \
+  --app factory@0.1.0 \
+  --mission mission.json \
+  --repo https://github.com/acme/project.git \
+  --repo-ref main \
+  --issue https://github.com/acme/project/issues/7 \
+  --secret forge=secret://forge/token \
+  --publish draft-pr \
+  --publish-credential forge \
+  --head-branch barista/issue-7
+```
+
+This compiles to `bindings.workspace`, `bindings.objective`, and the explicit
+`deliveries.change`; issue text cannot create that delivery or alter its target.
+
+Remote **app-source** repositories are not cloned or executed implicitly. Until
+exact remote app-source resolution is implemented, install a validated pinned
+manifest or use a local manifest source. Git repositories supplied as project
+bindings are different: the source adapter resolves their ref once, checks out
+the exact commit, applies an explicit size bound, and refuses submodule or LFS
+behavior unless the binding chooses an implemented policy.

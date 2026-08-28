@@ -143,6 +143,58 @@ def test_default_name_changes_when_delivery_request_changes():
     assert local_only != publish
 
 
+def test_repository_issue_mission_and_publish_flags_project_to_canonical_maps(tmp_path):
+    mission = tmp_path / "mission.json"
+    mission.write_text("{}")
+    args = cli._parser().parse_args(
+        [
+            "run",
+            "--app", "factory",
+            "--mission", str(mission),
+            "--repo", "https://github.com/acme/project.git",
+            "--repo-ref", "main",
+            "--issue", "https://github.com/acme/project/issues/7",
+            "--secret", "forge=secret://forge/token",
+            "--publish", "draft-pr",
+            "--publish-credential", "forge",
+            "--head-branch", "barista/issue-7",
+        ]
+    )
+    bindings = {}
+    deliveries = {}
+
+    cli._project_convenience(args, bindings, deliveries)
+
+    assert bindings == {
+        "workspace": {
+            "kind": "sh.barista.git.repository",
+            "uri": "https://github.com/acme/project.git",
+            "ref": "main",
+        },
+        "objective": {
+            "kind": "com.github.issue",
+            "uri": "https://github.com/acme/project/issues/7",
+        },
+    }
+    assert deliveries["change"] == {
+        "kind": "com.github.draft-pull-request",
+        "target": "https://github.com/acme/project.git",
+        "credential": "forge",
+        "options": {"base_ref": "main", "head_branch": "barista/issue-7"},
+    }
+
+
+def test_publish_projection_refuses_implicit_target(tmp_path):
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}")
+    args = cli._parser().parse_args(
+        ["run", "--app", "reviewer", "--input", str(input_path), "--publish", "draft-pr"]
+    )
+
+    with pytest.raises(ValueError, match="requires --publish-target or --repo"):
+        cli._project_convenience(args, {}, {})
+
+
 def test_named_bindings_refuse_duplicates_without_echoing_values():
     with pytest.raises(ValueError, match="duplicate binding name"):
         cli._named_json(
