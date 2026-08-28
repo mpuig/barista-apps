@@ -19,6 +19,7 @@ packages = ["barista_app_factory"]
 # Runtime contract documents must ship in the wheel, not only the checkout.
 artifacts = [
   "barista_app_factory/mission.schema.json",
+  "barista_app_factory/triage.schema.json",
   "barista_app_factory/manifest.json",
 ]
 

@@ -22,7 +22,7 @@ def test_issue_claim_compiles_to_one_runner_owned_factory_run(tmp_path: Path):
         issue_number=42,
         issue_uri=config.repository + "/issues/42",
         status="accepted",
-        run_name="ignored-by-compiler",
+        run_name="github-62924231c5-issue-42-attempt-1",
     )
 
     run = build_factory_run(config, claim)
@@ -32,7 +32,7 @@ def test_issue_claim_compiles_to_one_runner_owned_factory_run(tmp_path: Path):
         run.name
         == "github-"
         + hashlib.sha256(config.repository.encode()).hexdigest()[:10]
-        + "-issue-42"
+        + "-issue-42-attempt-1"
     )
     assert document["bindings"] == {
         "objective": {
@@ -68,7 +68,7 @@ def test_run_and_branch_identity_are_stable_across_webhook_retries(tmp_path: Pat
         5,
         config.repository + "/issues/5",
         "accepted",
-        "unused",
+        "github-62924231c5-issue-5-attempt-1",
     )
     retry = Claim(
         "delivery-retry",
@@ -76,7 +76,7 @@ def test_run_and_branch_identity_are_stable_across_webhook_retries(tmp_path: Pat
         5,
         config.repository + "/issues/5",
         "accepted",
-        "unused",
+        "github-62924231c5-issue-5-attempt-1",
     )
 
     first = build_factory_run(config, one).to_document()

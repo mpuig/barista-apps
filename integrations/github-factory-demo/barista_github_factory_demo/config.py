@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+
+_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 
 
 def _required(name: str) -> str:
@@ -29,6 +32,8 @@ class ControllerConfig:
     max_webhook_bytes: int = 1024 * 1024
     max_patch_bytes: int = 16 * 1024 * 1024
     concurrency: int = 2
+    authorized_responders: tuple[str, ...] = ()
+    controller_login: str | None = None
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.repository)
@@ -53,15 +58,34 @@ class ControllerConfig:
             raise ValueError("max_patch_bytes is outside the supported bound")
         if not (1 <= self.concurrency <= 16):
             raise ValueError("concurrency must be between 1 and 16")
+        logins = (
+            *self.authorized_responders,
+            *((self.controller_login,) if self.controller_login else ()),
+        )
+        if any(_LOGIN.fullmatch(login) is None for login in logins):
+            raise ValueError("GitHub responder logins are invalid")
 
     @property
     def full_name(self) -> str:
         return self.repository.removeprefix("https://github.com/")
 
+    @property
+    def responders(self) -> frozenset[str]:
+        configured = self.authorized_responders or (self.full_name.split("/", 1)[0],)
+        return frozenset(login.casefold() for login in configured)
+
     @classmethod
     def from_env(cls) -> ControllerConfig:
+        repository = _required("BARISTA_GITHUB_REPOSITORY")
+        responders = tuple(
+            item.strip()
+            for item in os.environ.get(
+                "BARISTA_GITHUB_AUTHORIZED_RESPONDERS", ""
+            ).split(",")
+            if item.strip()
+        )
         return cls(
-            repository=_required("BARISTA_GITHUB_REPOSITORY"),
+            repository=repository,
             webhook_secret=_required("BARISTA_GITHUB_WEBHOOK_SECRET"),
             github_token=_required("BARISTA_GITHUB_TOKEN"),
             factory_app=os.environ.get("BARISTA_FACTORY_APP", "factory@0.1.0"),
@@ -82,6 +106,8 @@ class ControllerConfig:
                 os.environ.get("BARISTA_GITHUB_MAX_PATCH_BYTES", "16777216")
             ),
             concurrency=int(os.environ.get("BARISTA_GITHUB_CONCURRENCY", "2")),
+            authorized_responders=responders,
+            controller_login=os.environ.get("BARISTA_GITHUB_CONTROLLER_LOGIN") or None,
         )
 
     def public_document(self) -> dict:
@@ -95,6 +121,8 @@ class ControllerConfig:
             "max_webhook_bytes": self.max_webhook_bytes,
             "max_patch_bytes": self.max_patch_bytes,
             "concurrency": self.concurrency,
+            "authorized_responders": sorted(self.responders),
+            "controller_login": self.controller_login,
         }
 
 

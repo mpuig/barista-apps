@@ -61,7 +61,15 @@ def _atomic_write(path: Path, content: bytes) -> None:
 
 def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
     repository_hash = hashlib.sha256(config.repository.encode()).hexdigest()[:10]
-    run_name = f"github-{repository_hash}-issue-{claim.issue_number}"
+    expected = (
+        f"github-{repository_hash}-issue-{claim.issue_number}-attempt-{claim.attempt}"
+    )
+    legacy = f"github-{repository_hash}-issue-{claim.issue_number}"
+    if claim.run_name != expected and not (
+        claim.attempt == 1 and claim.run_name == legacy
+    ):
+        raise ValueError("claim run identity does not match repository issue attempt")
+    run_name = claim.run_name
     branch = f"barista/issue-{claim.issue_number}"
     document = {
         "schema_version": "v1alpha1",
@@ -116,6 +124,15 @@ def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
         "metadata": {
             "sh.barista.github-webhook": {
                 "issue_number": claim.issue_number,
+                "attempt": claim.attempt,
+                **(
+                    {
+                        "answer_comment_id": claim.answer_comment_id,
+                        "prior_result_digest": claim.prior_result_digest,
+                    }
+                    if claim.answer_comment_id is not None
+                    else {}
+                ),
             }
         },
     }

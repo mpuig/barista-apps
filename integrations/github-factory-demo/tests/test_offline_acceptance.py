@@ -285,7 +285,7 @@ def _executor_fixture(tmp_path: Path, host: FakeHostAPI, github: FakeGitHub):
         issue_number=7,
         issue_uri=config.repository + "/issues/7",
         status="accepted",
-        run_name="ignored",
+        run_name="github-62924231c5-issue-7-attempt-1",
     )
     return (
         config,

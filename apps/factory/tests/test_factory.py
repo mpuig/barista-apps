@@ -1077,7 +1077,8 @@ def test_recovered_running_task_reuses_attempt_no_duplicate_worker(tmp_path):
                 remaining = [s for s in client.list_sessions() if s.name == ts.worker]
                 assert remaining == [], f"a duplicate worker was orphaned: {remaining}"
     finally:
-        store.close(); node.close()
+        store.close()
+        node.close()
 
 
 # --------------------------------------------------------------------------- #

@@ -253,7 +253,7 @@ class GitHubAdmin:
         document = {
             "name": "web",
             "active": True,
-            "events": ["issues"],
+            "events": ["issues", "issue_comment"],
             "config": {
                 "url": url,
                 "content_type": "json",

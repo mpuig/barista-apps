@@ -130,7 +130,7 @@ uv run barista-github-demo setup \
 
 Setup creates (or explicitly reuses with `--reuse`) a public repository, refuses
 to overwrite differing seed files, installs the digest-pinned Factory and
-worker manifests, creates/updates an `issues` webhook, and writes mode-0600
+worker manifests, creates/updates an `issues` and `issue_comment` webhook, and writes mode-0600
 `.barista-github-demo.json`. It never writes either token or the signing secret
 to that state file.
 
@@ -142,6 +142,10 @@ export BARISTA_GITHUB_TOKEN='...one-repository runtime token...'
 export BARISTA_GITHUB_REPOSITORY='https://github.com/OWNER/barista-factory-demo'
 export BARISTA_FACTORY_APP='github-demo-factory@0.1.0'
 export BARISTA_FACTORY_WORKER_APP='github-issue-worker'
+# Optional comma-separated trusted responders; defaults to the repository owner.
+export BARISTA_GITHUB_AUTHORIZED_RESPONDERS='OWNER'
+# Identify the runtime bot so its own marker comments cannot resume work.
+export BARISTA_GITHUB_CONTROLLER_LOGIN='barista-factory-bot'
 uv run barista-github-demo serve --host 0.0.0.0 --port 8098
 ```
 
@@ -188,8 +192,12 @@ absence, then writes non-secret evidence. It is intentionally not part of CI.
 
 Factory/session failures and pre-delivery verification failures are recorded as
 `failed` and preserve the owning session for bounded operator forensics. A
-controller restart re-dispatches durable `accepted` or `running` rows. Stable
-run and `barista/issue-N` branch identities plus forge-side marker checks prevent
+controller restart re-dispatches durable `accepted` or `running` rows. A
+validated clarification result can end an attempt as `awaiting_input`; only a
+signed fresh comment from a configured responder advances it. Duplicate, stale,
+bot, and self comments remain inert. Attempt run names are stable
+`github-REPO-issue-N-attempt-A` identities while the publication branch remains
+`barista/issue-N`. Stable identities plus forge-side marker checks prevent
 retry-created duplicate sessions or pull requests.
 
 ## Teardown
