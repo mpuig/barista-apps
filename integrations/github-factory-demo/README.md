@@ -57,6 +57,56 @@ uv sync --extra test
 The Host API configuration uses the normal SDK variables, notably
 `BARISTA_HOST_API_ENDPOINT` and `BARISTA_HOST_API_TOKEN`.
 
+## Managed beta deployment
+
+Beta uses `https://github-factory.beta.barista.sh`. DNS and Caddy are managed by
+the reviewed `barista-cloud` deployment; this repository deploys controller
+source and beta-local workload images:
+
+```sh
+bash integrations/github-factory-demo/deploy-beta.sh
+```
+
+The command refuses dirty/non-`main` source before SSH, copies additively to both
+Hetzner hosts, excludes every `.env` plus SQLite/results state, builds Factory
+and the issue worker on the managed node, pushes them only to its loopback
+registry, records registry response digests, installs a hardened loopback-only
+systemd controller, and starts it only if its separate root-owned environment
+file exists. The beta-local images are acceptance infrastructure, not durable
+public releases.
+
+Use the keyring-backed broad GitHub bootstrap authority separately to create or
+reuse and seed `mpuig/barista-factory-demo`, install the signed webhook, and
+install the exact node-reported app identities:
+
+```sh
+cd integrations/github-factory-demo
+uv run python bootstrap-beta.py
+```
+
+The runtime token is different. Create a fine-grained GitHub token selected only
+for `mpuig/barista-factory-demo` with:
+
+- Metadata: read
+- Contents: read and write
+- Issues: read and write
+- Pull requests: read and write
+
+Save that token as one line in a mode-0600 file outside the repository. Do not
+paste it into argv, a shell assignment, setup state, or an App Run. Provision it
+with the existing Host API key and generated webhook secret over SSH stdin:
+
+```sh
+uv run python provision-beta.py \
+  --repository https://github.com/mpuig/barista-factory-demo \
+  --github-token-file /secure/path/github-factory-runtime-token
+```
+
+Provisioning atomically writes `/etc/barista/github-factory-demo.env` as
+root:root mode 0600, restarts the unit, and verifies both loopback and public
+health without printing any credential. Re-running source deployment preserves
+this file and `/var/lib/barista-github-factory-demo`.
+
 ## Bootstrap
 
 Expose the controller at a stable public HTTPS URL. The webhook URL must end in
