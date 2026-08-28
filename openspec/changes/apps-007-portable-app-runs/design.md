@@ -137,7 +137,11 @@ Codex-, GitHub-, or Factory-specific property enters the Host API.
 The runner serializes the envelope with the ecosystem's canonical JSON rules and
 delivers it as non-secret launch configuration. The initial transport is
 `BARISTA_APP_RUN`; large content is represented by a binding rather than copied
-into the envelope.
+into the envelope. The provider also injects the reserved
+`BARISTA_APP_SESSION_ID` with the opaque Host API handle it allocated before the
+workload started. The caller cannot supply or override that value. An app can
+therefore register results on its own durable scope without guessing by name,
+creating a duplicate session, or learning a node identifier.
 
 Apps may keep an established app-specific bootstrap variable. Factory does:
 `$BARISTA_FACTORY_MISSION` remains the canonical in-session mission mechanism.
@@ -154,7 +158,8 @@ least-privilege rules.
 
 A job/coordinator writes canonical result JSON at a declared path in its own
 session and registers its digest and media type as an artifact before it may be
-reaped. The runner reads the bytes while the owning session still exists and
+reaped. A coordinator obtains that owning handle from the provider-injected
+launch context described in D8. The runner reads the bytes while the owning session still exists and
 verifies the digest. Successful child workers may disappear; the owning session
 and result are the durable rendezvous.
 

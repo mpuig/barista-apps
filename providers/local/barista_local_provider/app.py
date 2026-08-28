@@ -30,6 +30,7 @@ from .store import Store
 PROVIDER_NAME = "barista-local"
 PROVIDER_VERSION = "0.1.0a1"
 CONTRACT_VERSION = "v1alpha1"
+APP_SESSION_ID_ENV = "BARISTA_APP_SESSION_ID"
 
 
 def _contracts_dir() -> Path:
@@ -161,8 +162,28 @@ class LocalProvider:
 
         import uuid
 
+        supplied_env = {str(k): str(v) for k, v in (body.get("env") or {}).items()}
+        if APP_SESSION_ID_ENV in supplied_env:
+            return errors.invalid_request(
+                f"environment variable {APP_SESSION_ID_ENV} is provider-reserved",
+                "session.reserved_env",
+            )
+
+        # Allocate and persist the opaque Host API handle before the workload
+        # starts, so the provider can inject it into the entrypoint without a
+        # race in which the app calls back before its session exists.
+        session_id = "sess-" + uuid.uuid4().hex[:16]
         node_instance_id = "inst-" + uuid.uuid4().hex
+        session = self.store.create_session(
+            node_instance_id=node_instance_id,
+            app=app_name,
+            name=body.get("name"),
+            metadata=body.get("metadata"),
+            session_id=session_id,
+            state="creating",
+        )
         start_cmd = list(workload["entrypoint"]) + list(body.get("args", []))
+        supplied_env[APP_SESSION_ID_ENV] = session_id
         try:
             self.node.create_and_start(
                 InstanceRequest(
@@ -171,21 +192,21 @@ class LocalProvider:
                     digest=workload["digest"],
                     arch=workload["architectures"][0],
                     start_cmd=start_cmd,
-                    env=body.get("env", {}),
+                    env=supplied_env,
                     workdir=workload.get("working_dir"),
                 )
             )
         except NodeUnsupported as exc:
+            self.store.delete_session(session_id)
             return errors.capability_unsupported(str(exc))
+        except Exception:
+            self.store.delete_session(session_id)
+            raise
 
-        session = self.store.create_session(
-            node_instance_id=node_instance_id,
-            app=app_name,
-            name=body.get("name"),
-            metadata=body.get("metadata"),
-        )
-        self.store.append_event(session["id"], "session.state_changed", {"state": "running"})
-        self.store.idempotent_record(idem, "ensure", session["id"])
+        self.store.set_session_state(session_id, "running")
+        session = self.store.get_session(session_id)
+        self.store.append_event(session_id, "session.state_changed", {"state": "running"})
+        self.store.idempotent_record(idem, "ensure", session_id)
         return JSONResponse(session, status_code=201)
 
     async def get_session(self, request: Request) -> Response:

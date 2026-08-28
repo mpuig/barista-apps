@@ -244,6 +244,39 @@ def ensure_idempotent(client, config, advertised):
     return ok("core.ensure_idempotent", CORE, "replayed ensure returned the same session")
 
 
+@case("core.session_self_id_is_reserved")
+def session_self_id_is_reserved(client, config, advertised):
+    manifest = config.probe_workload.manifest()
+    installed = client.install_app(manifest, key=new_idempotency_key())
+    assert installed.status_code == 201, installed.text
+    before = client.list_sessions(app=manifest["name"])
+    assert before.status_code == 200, before.text
+    before_ids = {item["id"] for item in before.json().get("items", [])}
+
+    forged = client.ensure_session(
+        {
+            "app": manifest["name"],
+            "name": "forged-self-id-" + new_idempotency_key(),
+            "env": {"BARISTA_APP_SESSION_ID": "session-chosen-by-caller"},
+        },
+        key=new_idempotency_key(),
+    )
+    assert forged.status_code == 422, (
+        f"caller-supplied BARISTA_APP_SESSION_ID returned {forged.status_code}: {forged.text}"
+    )
+    schemas.assert_valid(schemas.component_validator("Error"), forged.json(), "Error")
+
+    after = client.list_sessions(app=manifest["name"])
+    assert after.status_code == 200, after.text
+    after_ids = {item["id"] for item in after.json().get("items", [])}
+    assert after_ids == before_ids, "refused reserved environment created a session"
+    return ok(
+        "core.session_self_id_is_reserved",
+        CORE,
+        "caller cannot forge provider-injected owning-session handle",
+    )
+
+
 @case("core.exec")
 def exec_case(client, config, advertised):
     sid = _ensure_a_session(client, config)

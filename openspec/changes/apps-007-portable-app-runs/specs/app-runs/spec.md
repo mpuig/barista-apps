@@ -136,6 +136,23 @@ is collected.
 - **WHEN** all child work is terminal but the coordinator has not registered its result and receipts
 - **THEN** the coordinator run is not yet reported complete
 
+### Requirement: An app SHALL receive its opaque owning-session handle
+
+Before starting an app workload, the provider SHALL allocate and persist its
+opaque Host API session handle and inject that handle as reserved, non-secret
+launch context. A caller SHALL NOT be able to supply or override the reserved
+value. The handle SHALL NOT expose a node address or provider-internal identity.
+
+#### Scenario: Factory uses its launch session as durable scope
+
+- **WHEN** Factory starts as a coordinator App Run
+- **THEN** it receives its owning Host API session handle and registers results there instead of creating a second coordinator session
+
+#### Scenario: caller cannot forge the owning handle
+
+- **WHEN** a session ensure request attempts to set the reserved owning-session environment variable
+- **THEN** the provider refuses the request before creating a session
+
 ### Requirement: A terminal run SHALL produce a verifiable canonical result
 
 A job or coordinator SHALL write a canonical result in its owning session and

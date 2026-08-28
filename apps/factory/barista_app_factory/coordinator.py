@@ -36,9 +36,11 @@ class Coordinator:
         state_path: str | Path,
         *,
         credential: Optional[CredentialKeeper] = None,
+        coordinator_session_id: Optional[str] = None,
     ):
         self.client = client
         self.mission = mission
+        self.coordinator_session_id = coordinator_session_id
         self.state = MissionState.open(state_path, mission.name, [t.id for t in mission.tasks])
         self.grant = derive_worker_grant(mission.permissions)
         # The coordinator's own credential outlives one grant lifetime only if
@@ -57,6 +59,13 @@ class Coordinator:
         """A stable mission session that outlives workers and holds receipts."""
         if self.state.coordinator_session_id:
             return self.state.coordinator_session_id
+        if self.coordinator_session_id:
+            # A workload launched as a typed App Run receives its own opaque Host
+            # API handle from the provider. Use that session as the durable
+            # receipt scope; do not create a second "coordinator" beside it.
+            self.state.coordinator_session_id = self.coordinator_session_id
+            self.state.save()
+            return self.coordinator_session_id
         session = self.client.ensure_session(
             self.mission.app,
             name=f"{self.mission.name}-coordinator",

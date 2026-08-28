@@ -61,7 +61,8 @@ stretching either umbrella change after the fact.
 - `app-sdk`: the SDK can validate, launch, observe, and collect a portable app
   run without provider-specific code.
 - `host-api`: an authorized runner can retrieve an installed app's validated
-  manifest in order to select and validate a run operation by app name.
+  manifest in order to select and validate a run operation by app name, and an
+  app workload receives its provider-allocated opaque owning-session handle.
 - `factory-app`: Factory accepts a repository workspace and objective through
   the shared run contract and may explicitly deliver a verified draft pull
   request.
@@ -70,7 +71,8 @@ stretching either umbrella change after the fact.
 
 - **Contracts:** a new `contracts/app-run/v1alpha1` JSON Schema, an additive
   `runs` declaration in the App Manifest schema, and read access to an installed
-  app's validated manifest through the existing Host API app resource.
+  app's validated manifest through the existing Host API app resource, plus a
+  provider-reserved owning-session handle injected before workload start.
 - **SDK:** new immutable App Run models, validation, canonical serialization,
   and a runner that compiles to existing install/ensure/exec/events/artifact
   operations rather than introducing a second scheduler.

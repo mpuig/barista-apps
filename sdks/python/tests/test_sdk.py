@@ -26,7 +26,15 @@ sys.path.insert(0, str(REPO / "providers" / "local"))
 
 from mock_provider import MockProvider  # noqa: E402
 
-from barista_app_sdk import APP_RUN_ENV, AppRun, BaristaClient, Config, errors, validate_run  # noqa: E402
+from barista_app_sdk import (  # noqa: E402
+    APP_RUN_ENV,
+    APP_SESSION_ID_ENV,
+    AppRun,
+    BaristaClient,
+    Config,
+    errors,
+    validate_run,
+)
 from barista_app_sdk.adapters import (  # noqa: E402
     Attachment,
     FidelityReport,
@@ -240,6 +248,7 @@ def test_launch_app_run_delivers_exact_canonical_envelope_and_is_idempotent():
     assert operation == replayed_operation
     assert operation.lifecycle == "job"
     assert mock.session_env[first.id][APP_RUN_ENV].encode() == run.canonical_bytes()
+    assert mock.session_env[first.id][APP_SESSION_ID_ENV] == first.id
     run_meta = first.raw.get("metadata", {}).get("sh.barista.app-run")
     # The mock provider intentionally projects only public Session fields, so
     # provenance is asserted at the launch environment here and in HTTP contract

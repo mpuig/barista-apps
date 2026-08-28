@@ -786,6 +786,43 @@ def test_a_generic_app_run_maps_to_the_canonical_factory_mission(monkeypatch):
     assert json.loads(os.environ[MISSION_ENV]) == mission
 
 
+def test_generic_factory_run_reuses_its_owning_session_as_durable_scope(tmp_path):
+    from barista_app_sdk import APP_SESSION_ID_ENV, AppRun
+    from barista_app_factory.__main__ import FACTORY_MISSION_MEDIA_TYPE
+
+    manifest = json.loads((REPO / "apps" / "factory" / "manifest.json").read_text())
+    mission_doc = {
+        "name": "owning-scope",
+        "app": WORKER_MANIFEST["name"],
+        "tasks": [{"id": "a", "command": ["true"]}],
+    }
+    run = AppRun.parse(
+        {
+            "schema_version": "v1alpha1",
+            "name": "factory-run-owning-scope",
+            "app": "factory@0.1.0",
+            "operation": "mission",
+            "input": {"media_type": FACTORY_MISSION_MEDIA_TYPE, "value": mission_doc},
+        }
+    )
+    provider = MockProvider(name="app-run")
+    with BaristaClient(
+        Config(endpoint="http://app-run.invalid"), transport=provider.transport()
+    ) as client:
+        owning, _ = client.launch_app_run(run, manifest)
+        launch_env = provider.session_env[owning.id]
+        coordinator = Coordinator(
+            client,
+            Mission.load(mission_doc),
+            tmp_path / "state.json",
+            coordinator_session_id=launch_env[APP_SESSION_ID_ENV],
+        )
+        durable_scope = coordinator._ensure_coordinator_session()
+
+    assert durable_scope == owning.id
+    assert len(provider.sessions) == 1, "Factory must not create a second coordinator session"
+
+
 def test_factory_refuses_generic_run_fields_its_mission_operation_does_not_declare(monkeypatch):
     from barista_app_factory.__main__ import (
         FACTORY_MISSION_MEDIA_TYPE,

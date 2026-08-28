@@ -19,7 +19,7 @@ from . import errors
 from .attach import AttachFrame
 from .config import Config
 from .models import Artifact, Discovery, Event, ExecHandle, Grant, InstalledApp, Operation, Session
-from .runs import APP_RUN_ENV, AppRun, RunOperation, validate_run
+from .runs import APP_RUN_ENV, APP_SESSION_ID_ENV, AppRun, RunOperation, validate_run
 
 BASE = "/v1alpha1"
 MANIFEST_MEDIA_TYPE = "application/vnd.barista.app-manifest.v1alpha1+json"
@@ -177,12 +177,18 @@ class BaristaClient:
         """
         operation = validate_run(run, manifest)
         launch_env = dict(env or {})
-        if APP_RUN_ENV in launch_env:
+        reserved = {APP_RUN_ENV, APP_SESSION_ID_ENV}
+        collisions = sorted(reserved.intersection(launch_env))
+        if collisions:
             raise errors.InvalidRequestError(
-                f"{APP_RUN_ENV} is reserved for the canonical App Run envelope",
+                f"reserved App Run environment cannot be overridden: {', '.join(collisions)}",
                 code="app_run.reserved_env",
+                details={"reserved": collisions},
                 error_class="invalid_request",
             )
+
+        key = idempotency_key or "app-run-" + run.content_id().split(":", 1)[1]
+        session_key = key + "-session"
         launch_env[APP_RUN_ENV] = run.canonical_bytes().decode("utf-8")
 
         required = [
@@ -191,7 +197,6 @@ class BaristaClient:
         ]
         self.negotiate(required=required)
 
-        key = idempotency_key or "app-run-" + run.content_id().split(":", 1)[1]
         if install:
             self.install_app(manifest, idempotency_key=key + "-install")
         session = self.ensure_session(
@@ -205,7 +210,7 @@ class BaristaClient:
                     "lifecycle": operation.lifecycle,
                 }
             },
-            idempotency_key=key + "-session",
+            idempotency_key=session_key,
         )
         return session, operation
 

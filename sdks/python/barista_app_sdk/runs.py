@@ -20,6 +20,7 @@ from jsonschema.validators import validator_for
 from .errors import InvalidRequestError
 
 APP_RUN_ENV = "BARISTA_APP_RUN"
+APP_SESSION_ID_ENV = "BARISTA_APP_SESSION_ID"
 APP_RUN_MEDIA_TYPE = "application/vnd.barista.app-run.v1alpha1+json"
 APP_RUN_RESULT_MEDIA_TYPE = "application/vnd.barista.app-run-result.v1alpha1+json"
 

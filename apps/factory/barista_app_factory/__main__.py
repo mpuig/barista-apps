@@ -11,7 +11,14 @@ import json
 import os
 import sys
 
-from barista_app_sdk import APP_RUN_ENV, AppRun, BaristaClient, Config, errors
+from barista_app_sdk import (
+    APP_RUN_ENV,
+    APP_SESSION_ID_ENV,
+    AppRun,
+    BaristaClient,
+    Config,
+    errors,
+)
 
 from .coordinator import Coordinator
 from .mission import Mission
@@ -144,7 +151,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print("coordinator ready", flush=True)  # readiness log line (see manifest)
     with BaristaClient(config) as client:
-        coordinator = Coordinator(client, mission, args.state)
+        coordinator = Coordinator(
+            client,
+            mission,
+            args.state,
+            coordinator_session_id=os.environ.get(APP_SESSION_ID_ENV),
+        )
         state = coordinator.run()
 
     summary = state.summary()
