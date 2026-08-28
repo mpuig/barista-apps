@@ -138,56 +138,62 @@ class GitHubAdmin:
             )
         branch_exists = ref_response.status_code == 200
         if not branch_exists:
-            tree = []
-            for path, content in SEED_FILES.items():
-                blob = self.request(
-                    "POST",
-                    f"/repos/{quote(owner)}/{quote(repository)}/git/blobs",
-                    document={"content": content, "encoding": "utf-8"},
+            # GitHub refuses every Git Database endpoint with 409 while a
+            # repository is empty. Bootstrap its first commit through Contents,
+            # then normalize an account-specific default branch to `main`.
+            repository_document = self.request(
+                "GET", f"/repos/{quote(owner)}/{quote(repository)}"
+            )
+            if not isinstance(repository_document, dict):
+                raise TypeError("GitHub repository response is invalid")
+            default_branch = str(repository_document.get("default_branch") or "main")
+            readme_endpoint = (
+                f"/repos/{quote(owner)}/{quote(repository)}/contents/README.md"
+            )
+            readme_response = httpx.request(
+                "GET",
+                self._api + readme_endpoint,
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "barista-github-factory-demo",
+                },
+                timeout=30,
+            )
+            if readme_response.status_code == 404:
+                self.request(
+                    "PUT",
+                    readme_endpoint,
+                    document={
+                        "message": "Seed Barista GitHub Factory demo",
+                        "content": base64.b64encode(SEED_README.encode()).decode(),
+                    },
                     expected=(201,),
                 )
-                if not isinstance(blob, dict) or not blob.get("sha"):
-                    raise RuntimeError("GitHub seed blob response is invalid")
-                tree.append(
-                    {"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]}
+            elif readme_response.status_code == 200:
+                try:
+                    existing_readme = base64.b64decode(
+                        readme_response.json()["content"]
+                    ).decode("utf-8")
+                except (KeyError, ValueError, UnicodeDecodeError) as exc:
+                    raise RuntimeError("existing seed README is unreadable") from exc
+                if existing_readme != SEED_README:
+                    raise RuntimeError(
+                        "existing seed file differs; refusing to overwrite: README.md"
+                    )
+            else:
+                raise RuntimeError(
+                    "GitHub seed README lookup returned HTTP "
+                    f"{readme_response.status_code}"
                 )
-            created_tree = self.request(
-                "POST",
-                f"/repos/{quote(owner)}/{quote(repository)}/git/trees",
-                document={"tree": tree},
-                expected=(201,),
-            )
-            if not isinstance(created_tree, dict) or not created_tree.get("sha"):
-                raise RuntimeError("GitHub seed tree response is invalid")
-            commit = self.request(
-                "POST",
-                f"/repos/{quote(owner)}/{quote(repository)}/git/commits",
-                document={
-                    "message": "Seed Barista GitHub Factory demo",
-                    "tree": created_tree["sha"],
-                    "parents": [],
-                    "author": {
-                        "name": "Barista Demo",
-                        "email": "demo@barista.invalid",
-                        "date": "2000-01-01T00:00:00Z",
-                    },
-                    "committer": {
-                        "name": "Barista Demo",
-                        "email": "demo@barista.invalid",
-                        "date": "2000-01-01T00:00:00Z",
-                    },
-                },
-                expected=(201,),
-            )
-            if not isinstance(commit, dict) or not commit.get("sha"):
-                raise RuntimeError("GitHub seed commit response is invalid")
-            self.request(
-                "POST",
-                f"/repos/{quote(owner)}/{quote(repository)}/git/refs",
-                document={"ref": f"refs/heads/{branch}", "sha": commit["sha"]},
-                expected=(201,),
-            )
-            return
+            if default_branch != branch:
+                self.request(
+                    "POST",
+                    f"/repos/{quote(owner)}/{quote(repository)}/branches/"
+                    f"{quote(default_branch, safe='')}/rename",
+                    document={"new_name": branch},
+                    expected=(201,),
+                )
         for path, content in SEED_FILES.items():
             endpoint = f"/repos/{quote(owner)}/{quote(repository)}/contents/{quote(path, safe='/')}"
             response = httpx.request(
