@@ -92,6 +92,18 @@ jobs:
         working-directory: apps/${{ matrix.adapter }}
         run: uv run --extra test pytest -q
 
+  change-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Single-agent repository job tests (offline)
+        working-directory: apps/change-agent
+        run: uv run --extra test pytest -q
+
   factory:
     runs-on: ubuntu-latest
     steps:

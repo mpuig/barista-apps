@@ -110,6 +110,8 @@ def check_sdk_contract_copies() -> None:
             "contracts/app-manifest/v1alpha1/schema.json",
         "sdks/python/barista_app_sdk/_contracts/app-run-result-v1alpha1.schema.json":
             "contracts/app-run/v1alpha1/result.schema.json",
+        "apps/change-agent/barista_app_change_agent/manifest.json":
+            "apps/change-agent/manifest.json",
     }
     for packaged_name, canonical_name in copies.items():
         packaged = REPO / packaged_name

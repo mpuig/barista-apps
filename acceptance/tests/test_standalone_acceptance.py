@@ -15,8 +15,11 @@ Everything below runs under one process-wide standalone guard.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -34,9 +37,19 @@ from barista_conformance.standalone import (
     install_guard,
 )
 
-from barista_app_sdk import BaristaClient, Config
+from barista_app_sdk import (
+    AppRun,
+    BaristaClient,
+    Config,
+    DeliveryRequest,
+    FakeForge,
+    PatchArtifact,
+    ResolvedGitRepository,
+    deliver_draft_change,
+)
 from barista_local_provider import create_local_app
 from barista_app_factory import Coordinator, Mission
+from barista_app_change_agent import execute_change_run, load_manifest as load_change_manifest
 from barista_app_lift import Lift, SourceRef
 from barista_app_pi import PiAdapter
 from barista_app_story import StoryBuilder, Source
@@ -89,8 +102,20 @@ def _write_pi_fixture(home: Path, workspace: str) -> None:
     )
 
 
-def test_full_standalone_acceptance_with_cloud_blocked(tmp_path):
-    # (1) Cloud-absent guard, enforced for the whole test.
+def _git(path: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_full_standalone_acceptance_with_cloud_blocked(tmp_path, monkeypatch):
+    # (1) Cloud-absent guard, enforced for the whole test. The standalone path
+    # also receives no ambient managed-provider credential.
+    for variable in ("BARISTA_HOST_API_TOKEN", "BARISTA_TOKEN", "BARISTA_KEY"):
+        monkeypatch.delenv(variable, raising=False)
     assert_no_proprietary_modules(PROPRIETARY)
     install_guard(cloud_hosts=CLOUD_HOSTS, proprietary_modules=PROPRIETARY)
     with pytest.raises(StandaloneViolation):
@@ -130,7 +155,95 @@ def test_full_standalone_acceptance_with_cloud_blocked(tmp_path):
                     "receipt-t1.json", "receipt-t2.json", "mission-result.json"
                 }
 
-                # (5) Semantic Lift with the Pi adapter (native -> new session).
+                # (5) A single-agent repository run against local Git, followed
+                # by explicit delivery through the fully offline fake forge.
+                project = tmp_path / "project"
+                project.mkdir()
+                _git(project, "init", "-q", "-b", "main")
+                _git(project, "config", "user.email", "test@example.invalid")
+                _git(project, "config", "user.name", "Test")
+                (project / "value.txt").write_text("before\n")
+                _git(project, "add", "value.txt")
+                _git(project, "commit", "-qm", "base")
+                base_commit = _git(project, "rev-parse", "HEAD")
+
+                change_manifest = load_change_manifest()
+                client.install_app(change_manifest)
+                owner = client.ensure_session(change_manifest["name"], name="acc-change-owner")
+                monkeypatch.setenv("BARISTA_APP_SESSION_ID", owner.id)
+                import barista_app_sdk.lifecycle as lifecycle
+
+                monkeypatch.setattr(
+                    lifecycle, "APP_RUN_RESULT_PATH", str(tmp_path / "change-result.json")
+                )
+                change_run = AppRun.parse({
+                    "schema_version": "v1alpha1",
+                    "name": "acc-single-change",
+                    "app": "change-agent@0.1.0",
+                    "operation": "change",
+                    "input": {
+                        "media_type": "application/json",
+                        "value": {
+                            "command": [
+                                sys.executable, "-c",
+                                "from pathlib import Path; Path('value.txt').write_text('after\\n')",
+                            ],
+                            "check": [
+                                sys.executable, "-c",
+                                "from pathlib import Path; assert Path('value.txt').read_text() == 'after\\n'",
+                            ],
+                        },
+                    },
+                    "bindings": {
+                        "workspace": {
+                            "kind": "sh.barista.git.repository",
+                            "uri": project.as_uri(),
+                            "ref": "main",
+                        }
+                    },
+                })
+                change_result = execute_change_run(
+                    client, change_run, work_root=tmp_path / "change-runs"
+                ).to_document()
+                assert change_result["state"] == "succeeded"
+                assert change_result["bindings"]["workspace"]["resolved_identity"] == base_commit
+
+                patch_path = tmp_path / "change-runs" / change_run.name / "change.patch"
+                patch_bytes = patch_path.read_bytes()
+                patch = PatchArtifact(
+                    data=patch_bytes,
+                    digest="sha256:" + hashlib.sha256(patch_bytes).hexdigest(),
+                    size_bytes=len(patch_bytes),
+                    path=patch_path,
+                )
+                repository = ResolvedGitRepository(
+                    uri=project.as_uri(),
+                    requested_ref="main",
+                    commit=base_commit,
+                    workspace=tmp_path / "change-runs" / change_run.name / "repository",
+                    size_bytes=change_result["bindings"]["workspace"]["metadata"]["size_bytes"],
+                    submodules="none",
+                    lfs="none",
+                )
+                forge = FakeForge()
+                forge.add_repository(project.as_uri(), refs={"main": base_commit})
+                delivery = DeliveryRequest.parse({
+                    "kind": "com.github.draft-pull-request",
+                    "target": project.as_uri(),
+                    "options": {"base_ref": "main", "head_branch": "barista/acc-change"},
+                })
+                draft = deliver_draft_change(
+                    delivery,
+                    adapter=forge,
+                    repository=repository,
+                    run_state=change_result["state"],
+                    patch=patch,
+                    title="Apply standalone acceptance change",
+                    body="Verified by the declared check.",
+                )
+                assert draft.draft is True and len(forge.changes) == 1
+
+                # (6) Semantic Lift with the Pi adapter (native -> new session).
                 workspace = "/work/acc-project"
                 _write_pi_fixture(tmp_path / "pi-home", workspace)
                 lift = Lift(client, client, adapter=PiAdapter(home=tmp_path / "pi-home"),
@@ -142,7 +255,7 @@ def test_full_standalone_acceptance_with_cloud_blocked(tmp_path):
                 assert "transcript" in receipt.transferred
                 assert receipt.target_session_id
 
-                # (6) Session Story from the mission's knowledge records.
+                # (7) Session Story from the mission's knowledge records.
                 records = [
                     {"type": "decision", "time": "2026-08-17T00:00:01Z", "text": "ran factory acc"},
                     {"type": "receipt", "time": "2026-08-17T00:00:02Z",

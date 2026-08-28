@@ -9,6 +9,7 @@ dependencies = [
     "barista-conformance",
     "barista-app-pi",
     "barista-app-factory",
+    "barista-app-change-agent",
     "barista-app-lift",
     "barista-app-story",
     "pytest>=8.0",
@@ -21,6 +22,7 @@ barista-local-provider = { path = "../providers/local", editable = true }
 barista-conformance = { path = "../conformance", editable = true }
 barista-app-pi = { path = "../apps/pi", editable = true }
 barista-app-factory = { path = "../apps/factory", editable = true }
+barista-app-change-agent = { path = "../apps/change-agent", editable = true }
 barista-app-lift = { path = "../apps/lift", editable = true }
 barista-app-story = { path = "../apps/story", editable = true }
 

@@ -1,0 +1,25 @@
+[project]
+name = "barista-app-change-agent"
+version = "0.1.0a1"
+description = "Single-agent repository change reference app for portable Barista App Runs."
+requires-python = ">=3.10"
+dependencies = ["barista-app-sdk"]
+
+[project.scripts]
+barista-change-agent = "barista_app_change_agent.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "jsonschema[format]>=4.20"]
+
+[tool.uv.sources]
+barista-app-sdk = {path = "../../sdks/python", editable = true}
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_change_agent"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
