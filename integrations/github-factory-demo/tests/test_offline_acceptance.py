@@ -38,6 +38,7 @@ class FakeHostAPI:
         self.announced_digest = announced_digest
         self.outputs = {}
         self.deleted = []
+        self.config = SimpleNamespace(endpoint="https://provider.example")
         manifest = json.loads((ROOT / "apps/factory/manifest.json").read_text())
         self.installed = InstalledApp(
             name="factory",
@@ -57,8 +58,9 @@ class FakeHostAPI:
         assert name == "factory"
         return self.installed
 
-    def launch_app_run(self, run, manifest, *, install):
+    def launch_app_run(self, run, manifest, *, install, env):
         assert not install
+        assert env == {"BARISTA_HOST_API_ENDPOINT": "https://provider.example"}
         self.run = run
         return (
             Session(
