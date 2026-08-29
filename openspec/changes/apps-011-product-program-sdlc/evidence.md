@@ -33,3 +33,33 @@ The first live call exposed two contract mismatches that offline mocks did not: 
 Corrected revision `abf84bddab6d485be4786d526c490c95966cba4a` was deployed from clean remote `main`. The controller environment was reprovisioned over SSH stdin with separate runtime-forge and project files, all checked at mode 0600 without printing their contents. Public health reports Project #4 enabled; the source marker matches the deployed revision, `/etc/barista` remains mode 0711, and `/etc/barista/github-factory-demo.env` remains root-owned mode 0600.
 
 Startup reconciliation added historical issues #4 and #5 to Project #4 and converged their terminal Status to `Done`. The controller recorded matching desired/projected states, opaque item IDs, no error, and one attempt. A live authority mutation then moved issue #5 manually to `In Progress`; its canonical controller state remained `succeeded`. Restart reconciliation restored the Project field to `Done`, and the durable projection attempt count advanced to two. This proves the board is a corrective read model rather than workflow authority.
+
+## Product-program runtime implementation phase
+
+- Added Factory `product-brief`, `feature-plan`, and `program-acceptance` operations. Planning verifies the exact approved commit and BRD digest before launching a separately installed planner; final acceptance uses the stripped local-check environment and retains failed or integrity-invalid sessions.
+- Added one digest-shared product worker image with separate `github-brd-author`, `github-feature-planner`, and `github-feature-worker` install identities. Its deterministic reference product is a one-runtime-container Python service with bounded APIs, SQLite under `/data`, backend-served compiled frontend assets, responsive source assets, a multi-stage Dockerfile, and offline persistence tests.
+- Added additive durable program/feature/dependency/approval state, idempotent marker-bound feature issue publication, exact authorized BRD/feature merge correlation, serial dependency release from current `main`, restart recovery, and final assembled-commit acceptance.
+- Feature-issue webhook events are explicitly inert so GitHub issue creation cannot bypass controller dependency gates. Fresh duplicate merge deliveries converge without failing or advancing canonical state twice.
+- Project projection now durably carries controller-owned `Work Type`, `Program`, `Feature`, `Attempt`, `Dependency`, `Result`, and `PR` presentation fields. Startup still writes desired state outward and never reads Project state as input.
+
+### Offline checks
+
+- Factory suite: 84 passed.
+- GitHub controller/bootstrap suite: 55 passed.
+- Product worker suite: 5 passed.
+- Contract suite: 74 passed.
+- Conformance self-tests: 22 passed.
+- Local provider suite: 14 passed.
+- Python SDK suite: 68 passed.
+- Standalone acceptance: 1 passed, 3 skipped, 1 deselected.
+- Supply-chain check passed.
+- Every active OpenSpec change passed strict validation.
+- Changed-scope Ruff checks and `git diff --check` passed. Repository-wide Ruff still reports unrelated pre-existing findings in untouched legacy packages and is not a configured CI gate.
+- Local OCI builds were attempted but Docker Desktop was unavailable; managed-node digest builds and runtime acceptance remain required before this phase is marked complete.
+- Apps PR #54 ran all 15 required current-head CI jobs successfully for implementation commit `6d93da4cde527976f1862f59421768379198e537`.
+
+### Product-program mutation evidence
+
+- Disabled the reserved feature-issue ingress guard. The full program test failed because the controller accepted a feature issue as an ordinary independent workflow. The mutation was restored.
+- Disabled the authorized-merger predicate. The merge-authority test failed because an unrelated actor could advance the correlated BRD PR. The mutation was restored.
+- Dependency-order assertions, cyclic/unknown-edge parser tests, exact BRD digest tests, fresh duplicate merge tests, and the earlier manual-Project-event mutation all pass against the restored implementation.

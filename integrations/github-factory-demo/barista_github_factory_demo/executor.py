@@ -28,21 +28,41 @@ from barista_app_sdk.sensitive import assert_no_high_confidence_secrets
 
 from .config import (
     ControllerConfig,
+    brd_author_command_from_env,
+    feature_worker_command_from_env,
     triage_command_from_env,
     worker_command_from_env,
 )
 from .store import Claim
 
 ACCEPTANCE_SCRIPT = """from pathlib import Path
+import json
+import subprocess
 import sys
 
 number = int(sys.argv[1])
 uri = sys.argv[2]
+feature = sys.argv[3] if len(sys.argv) > 3 else None
 path = Path("issues") / f"issue-{number}.md"
 text = path.read_text(encoding="utf-8")
 assert text.startswith(f"# Issue {number}: ")
 assert f"Source: {uri}\\n" in text
 assert "\\n## Objective\\n\\n" in text
+if feature == "brd":
+    brd = Path("docs/brd") / f"program-{number}.md"
+    assert brd.read_text().startswith("# BRD:")
+elif feature == "status-api":
+    manifest = json.loads(Path("product-manifest.json").read_text())
+    assert manifest["runtime"]["containers"] == 1
+    assert manifest["bindings"]["state"] == {"kind": "sqlite-state", "path": "/data", "writable": True}
+    assert "/api/health" in Path("app/server.py").read_text()
+elif feature == "event-store":
+    assert "sqlite3" in Path("app/server.py").read_text()
+    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], check=True)
+elif feature == "dashboard":
+    dockerfile = Path("Dockerfile").read_text()
+    assert dockerfile.count("FROM ") == 2 and "AS frontend" in dockerfile
+    assert all((Path("web/src") / name).is_file() for name in ("index.html", "app.css", "app.js"))
 """
 
 
@@ -75,12 +95,51 @@ def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
     ):
         raise ValueError("claim run identity does not match repository issue attempt")
     run_name = claim.run_name
-    branch = f"barista/issue-{claim.issue_number}"
+    if claim.workflow_kind == "program_brd":
+        operation = "product-brief"
+        worker_app = config.brd_author_app
+        worker_command = brd_author_command_from_env()
+        selector = "brd"
+        branch = f"barista/program-{claim.issue_number}-brd"
+        title = f"BRD for product program #{claim.issue_number}"
+        body = f"Verified BRD draft for {claim.issue_uri}. Human merge is the approval gate."
+    elif claim.workflow_kind == "feature":
+        if not claim.program_id or not claim.feature_id:
+            raise ValueError("feature claim has no program identity")
+        operation = "issue-sdlc"
+        worker_app = config.feature_worker_app
+        worker_command = feature_worker_command_from_env()
+        selector = claim.feature_id
+        branch = f"barista/{claim.program_id}-{claim.feature_id}"
+        title = f"Implement {claim.feature_id}"
+        body = (
+            f"Verified feature candidate for {claim.program_id}. "
+            "Merge approval releases its dependents."
+        )
+    else:
+        operation = "issue-sdlc"
+        worker_app = config.worker_app
+        worker_command = worker_command_from_env()
+        selector = None
+        branch = f"barista/issue-{claim.issue_number}"
+        title = f"Record issue #{claim.issue_number}"
+        body = (
+            f"Automated draft for {claim.issue_uri}.\n\n"
+            "Factory integrated the isolated worker patch and ran the repository-owned acceptance check."
+        )
+    acceptance_command = [
+        "python",
+        ".barista/accept_issue.py",
+        str(claim.issue_number),
+        claim.issue_uri,
+    ]
+    if selector is not None:
+        acceptance_command.append(selector)
     document = {
         "schema_version": "v1alpha1",
         "name": run_name,
         "app": config.factory_app,
-        "operation": "issue-sdlc",
+        "operation": operation,
         "input": {
             "media_type": "application/json",
             "value": {
@@ -88,27 +147,19 @@ def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
                 "triage": {"command": triage_command_from_env()},
                 "attempt": claim.attempt,
                 "answers": [dict(answer) for answer in claim.answers],
-                "worker_app": config.worker_app,
-                "tasks": [{"id": "issue", "command": worker_command_from_env()}],
+                "worker_app": worker_app,
+                "tasks": [{"id": "issue", "command": worker_command}],
                 "acceptance": {
-                    "command": [
-                        "python",
-                        ".barista/accept_issue.py",
-                        str(claim.issue_number),
-                        claim.issue_uri,
-                    ],
+                    "command": acceptance_command,
                     "files": {".barista/accept_issue.py": ACCEPTANCE_SCRIPT},
                 },
                 "concurrency": 1,
                 "timeout_seconds": 600,
                 "patch_max_bytes": config.max_patch_bytes,
                 "branch": branch,
-                "commit_message": f"Record GitHub issue #{claim.issue_number}",
-                "title": f"Record issue #{claim.issue_number}",
-                "body": (
-                    f"Automated draft for {claim.issue_uri}.\n\n"
-                    "Factory integrated the isolated worker patch and ran the repository-owned acceptance check."
-                ),
+                "commit_message": title,
+                "title": title,
+                "body": body,
             },
         },
         "bindings": {
@@ -154,7 +205,12 @@ def build_factory_run(config: ControllerConfig, claim: Claim) -> AppRun:
 
 
 def _capture(
-    client, session_id: str, command: list[str], *, timeout: float = 120.0
+    client,
+    session_id: str,
+    command: list[str],
+    *,
+    timeout: float = 120.0,
+    max_output_bytes: int = 1024 * 1024,
 ) -> bytes:
     handle = client.exec(session_id, command, timeout_seconds=int(timeout))
     operation = client.wait_operation(handle.operation_id, timeout=timeout)
@@ -169,7 +225,13 @@ def _capture(
         if event.operation_id is not None and event.operation_id != handle.operation_id:
             continue
         if event.type == "exec.stdout":
-            output.extend(base64.b64decode(event.data.get("chunk", ""), validate=True))
+            chunk = base64.b64decode(event.data.get("chunk", ""), validate=True)
+            if len(output) + len(chunk) > max_output_bytes:
+                raise ResultIntegrityError(
+                    "Factory output exceeded its bound",
+                    code="github_demo.output_too_large",
+                )
+            output.extend(chunk)
         elif event.type == "exec.exit":
             saw_exit = True
             break
@@ -206,7 +268,12 @@ def read_verified_question(
         raise ResultIntegrityError(
             "Factory question URI or size is invalid", code="github_demo.question_uri"
         )
-    raw = _capture(client, session_id, ["cat", str(pure_path)])
+    raw = _capture(
+        client,
+        session_id,
+        ["cat", str(pure_path)],
+        max_output_bytes=expected_size,
+    )
     digest = "sha256:" + hashlib.sha256(raw).hexdigest()
     if len(raw) != expected_size or digest != expected_digest:
         raise ResultIntegrityError(
@@ -298,6 +365,7 @@ def read_verified_patch(
         client,
         session_id,
         ["sh", "-c", f"set -e; wc -c < '{path}'; sha256sum '{path}'"],
+        max_output_bytes=1024,
     )
     try:
         lines = metadata.decode("ascii").splitlines()
@@ -332,6 +400,7 @@ def read_verified_patch(
                     "count=1",
                     "status=none",
                 ],
+                max_output_bytes=min(block_size, actual_size - index),
             )
         )
     raw = b"".join(chunks)

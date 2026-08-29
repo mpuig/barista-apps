@@ -1,0 +1,24 @@
+[project]
+name = "barista-app-github-product-worker"
+version = "0.1.0a1"
+description = "Deterministic BRD, feature planning, and product implementation workers."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+barista-demo-brd-author = "barista_app_github_product_worker.worker:brd_main"
+barista-demo-feature-planner = "barista_app_github_product_worker.worker:planner_main"
+barista-demo-feature-worker = "barista_app_github_product_worker.worker:feature_main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["barista_app_github_product_worker"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

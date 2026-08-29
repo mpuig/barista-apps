@@ -90,7 +90,7 @@ def main() -> int:
         "cat /opt/barista-apps/.github-factory-images.json",
     ]
     image_state = json.loads(subprocess.run(ssh, check=True, capture_output=True, text=True).stdout)
-    for app in ("factory", "triage", "worker"):
+    for app in ("factory", "triage", "worker", "product"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_state[app]["digest"]):
             raise SystemExit(f"managed node returned invalid {app} digest")
 
@@ -117,6 +117,24 @@ def main() -> int:
             state_path=args.state,
             reuse=True,
             client=client,
+            product_manifests=(
+                (
+                    root / "apps/github-product-worker/github-brd-author.manifest.json",
+                    "github-brd-author",
+                ),
+                (
+                    root
+                    / "apps/github-product-worker/github-feature-planner.manifest.json",
+                    "github-feature-planner",
+                ),
+                (
+                    root
+                    / "apps/github-product-worker/github-feature-worker.manifest.json",
+                    "github-feature-worker",
+                ),
+            ),
+            product_image=image_state["product"]["image"],
+            product_digest=image_state["product"]["digest"],
         )
     print(json.dumps(state, indent=2, sort_keys=True))
     print(f"webhook signing secret retained at {args.webhook_secret_file}; value not printed")

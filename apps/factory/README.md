@@ -99,6 +99,24 @@ integrity, authority, secret, and repository-identity failures publish nothing.
 Human waiting occurs outside Factory as a sequence of fresh App Runs, so no
 session or expiring grant spans the wait.
 
+## Product-program operations
+
+`product-brief` retains the issue-SDLC clarification and independent patch
+boundary while selecting a separately installed BRD-author identity. A verified
+draft BRD is still only review material; the Apps controller records approval
+only after a correlated authorized human merge.
+
+`feature-plan` gives an exact approved BRD commit to an isolated planner. Its
+canonical output is bounded to 16 uniquely identified features and is rejected
+for unknown edges, self-dependencies, cycles, unknown fields, non-canonical
+bytes, or changed program identity. Factory returns the verified plan artifact;
+the controller independently parses it before runner-owned issue publication.
+
+`program-acceptance` resolves the assembled repository once and runs the
+controller-owned acceptance command with `_run_local`'s stripped environment.
+The check gets no inherited Host API, forge, project, or model authority. Its
+canonical result binds the exact commit and feature identities.
+
 ## How mission coordination behaves
 
 - **One durable coordinator owns mission state** — task graph, worker handles,

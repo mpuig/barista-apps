@@ -36,7 +36,7 @@ from .software_change import (
 )
 from .triage import MAX_DECISION_BYTES, TriageDecision
 
-OPERATION = "issue-sdlc"
+OPERATIONS = {"issue-sdlc", "product-brief"}
 TRIAGE_OBJECTIVE = "/tmp/barista-triage-objective.json"
 TRIAGE_RESULT = "/tmp/barista-triage-result.json"
 
@@ -248,7 +248,7 @@ def execute_issue_sdlc(
     operation = validate_run(run, manifest)
     selected_name, separator, selected_version = run.app.rpartition("@")
     if (
-        operation.name != OPERATION
+        operation.name not in OPERATIONS
         or not separator
         or not selected_name
         or selected_version != manifest["version"]

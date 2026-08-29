@@ -55,7 +55,9 @@ MISSION_ENV = "BARISTA_FACTORY_MISSION"
 FACTORY_RUN_OPERATION = "mission"
 FACTORY_MISSION_MEDIA_TYPE = "application/vnd.barista.factory.mission+json"
 FACTORY_VERSION = "0.1.0"
-FACTORY_WORKLOAD_DIGEST = "sha256:5f0f2b8c1d3e4a5b6c7d8e9f00112233445566778899aabbccddeeff00112233"
+FACTORY_WORKLOAD_DIGEST = (
+    "sha256:5f0f2b8c1d3e4a5b6c7d8e9f00112233445566778899aabbccddeeff00112233"
+)
 
 
 def _map_app_run_to_mission() -> str | None:
@@ -73,7 +75,12 @@ def _map_app_run_to_mission() -> str | None:
     try:
         document = json.loads(raw)
         run = AppRun.parse(document)
-    except (json.JSONDecodeError, errors.InvalidRequestError, TypeError, ValueError) as exc:
+    except (
+        json.JSONDecodeError,
+        errors.InvalidRequestError,
+        TypeError,
+        ValueError,
+    ) as exc:
         # Keep startup output concise instead of turning invalid user input into
         # a provider-level guest-unreachable symptom.
         raise SystemExit(f"${APP_RUN_ENV} is not a valid App Run: {exc}") from exc
@@ -105,7 +112,12 @@ def _typed_app_run() -> AppRun | None:
         return None
     try:
         return AppRun.parse(json.loads(raw))
-    except (json.JSONDecodeError, errors.InvalidRequestError, TypeError, ValueError) as exc:
+    except (
+        json.JSONDecodeError,
+        errors.InvalidRequestError,
+        TypeError,
+        ValueError,
+    ) as exc:
         raise SystemExit(f"${APP_RUN_ENV} is not a valid App Run: {exc}") from exc
 
 
@@ -171,8 +183,11 @@ def _publish_typed_result(client: BaristaClient, run: AppRun, state) -> None:
         document["finished_at"] = state.finished_at
     if result_state != "succeeded":
         document["error"] = {
-            "code": "factory.lost_authority" if state.authority_lost else "factory.mission_failed",
-            "message": state.authority_lost or "one or more Factory tasks did not succeed",
+            "code": "factory.lost_authority"
+            if state.authority_lost
+            else "factory.mission_failed",
+            "message": state.authority_lost
+            or "one or more Factory tasks did not succeed",
         }
     register_app_run_result(client, AppRunResult.parse(document))
 
@@ -225,9 +240,13 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         help=f"Path to mission.json. Omit it to read the mission from ${MISSION_ENV}.",
     )
-    run.add_argument("--endpoint", help="Host API endpoint (or BARISTA_HOST_API_ENDPOINT).")
+    run.add_argument(
+        "--endpoint", help="Host API endpoint (or BARISTA_HOST_API_ENDPOINT)."
+    )
     run.add_argument("--token-env", help="Env var holding the bearer token.")
-    run.add_argument("--state", default="/work/mission-state.json", help="Durable state path.")
+    run.add_argument(
+        "--state", default="/work/mission-state.json", help="Durable state path."
+    )
     args = parser.parse_args(argv)
 
     mission_was_explicit = args.mission is not None or bool(os.environ.get(MISSION_ENV))
@@ -236,18 +255,29 @@ def main(argv: list[str] | None = None) -> int:
     # select the repository-backed operation.
     typed_run = None if mission_was_explicit else _typed_app_run()
 
-    if typed_run is not None and typed_run.operation in {"software-change", "issue-sdlc"}:
+    if typed_run is not None and typed_run.operation in {
+        "software-change",
+        "issue-sdlc",
+        "product-brief",
+        "feature-plan",
+        "program-acceptance",
+    }:
         from barista_app_sdk import GitHubForge
 
         from .issue_sdlc import execute_issue_sdlc
+        from .product_program import execute_feature_plan, execute_program_acceptance
         from .software_change import execute_software_change
 
         config = _load_config(args.endpoint, args.token_env)
         print("coordinator ready", flush=True)  # readiness log line (see manifest)
         forge = GitHubForge(token=os.environ.get("GITHUB_TOKEN"))
         with BaristaClient(config) as client:
-            if typed_run.operation == "issue-sdlc":
+            if typed_run.operation in {"issue-sdlc", "product-brief"}:
                 app_result = execute_issue_sdlc(client, typed_run, forge=forge)
+            elif typed_run.operation == "feature-plan":
+                app_result = execute_feature_plan(client, typed_run)
+            elif typed_run.operation == "program-acceptance":
+                app_result = execute_program_acceptance(client, typed_run)
             else:
                 app_result = execute_software_change(client, typed_run, forge=forge)
         document = app_result.to_document()

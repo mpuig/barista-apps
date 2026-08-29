@@ -66,6 +66,26 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=REPOSITORY_ROOT / "apps/github-issue-worker/manifest.json",
     )
+    setup.add_argument("--product-image")
+    setup.add_argument("--product-digest")
+    setup.add_argument(
+        "--brd-author-manifest",
+        type=Path,
+        default=REPOSITORY_ROOT
+        / "apps/github-product-worker/github-brd-author.manifest.json",
+    )
+    setup.add_argument(
+        "--planner-manifest",
+        type=Path,
+        default=REPOSITORY_ROOT
+        / "apps/github-product-worker/github-feature-planner.manifest.json",
+    )
+    setup.add_argument(
+        "--feature-worker-manifest",
+        type=Path,
+        default=REPOSITORY_ROOT
+        / "apps/github-product-worker/github-feature-worker.manifest.json",
+    )
     setup.add_argument("--state", type=Path, default=DEFAULT_STATE)
     setup.add_argument("--reuse", action="store_true")
 
@@ -137,6 +157,17 @@ def main(argv: list[str] | None = None) -> int:
             worker_digest=args.worker_digest,
             state_path=args.state,
             reuse=args.reuse,
+            product_manifests=(
+                (
+                    (args.brd_author_manifest, "github-brd-author"),
+                    (args.planner_manifest, "github-feature-planner"),
+                    (args.feature_worker_manifest, "github-feature-worker"),
+                )
+                if args.product_image and args.product_digest
+                else ()
+            ),
+            product_image=args.product_image,
+            product_digest=args.product_digest,
         )
         print(json.dumps(state, indent=2, sort_keys=True))
         print("\nController environment:")

@@ -1,5 +1,9 @@
 # GitHub issue → Factory → verified draft pull request
 
+For the complete clarification → BRD approval → dependency-gated features →
+assembled-product acceptance presentation, use
+[`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md).
+
 This integration is a persistent signed-webhook controller. Every accepted
 `issues/opened` event launches one ephemeral Factory App Run. Factory resolves
 the issue and exact repository base, gives the deterministic worker an isolated
@@ -9,7 +13,9 @@ idempotent draft pull request through `GitHubForge`, comments on the issue, save
 a compact result, and deletes the owning session.
 
 The persistent trigger is not an App Run. Factory and each child worker are.
-There is no second provider scheduler.
+There is no second provider scheduler. Root issues containing the fixed
+`[barista:product-program]` marker use the product-program state machine;
+ordinary issues retain the issue-only workflow.
 
 ## Authority boundaries
 
@@ -45,6 +51,9 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f apps/github-issue-worker/Dockerfile \
   -t REGISTRY/barista-github-issue-worker:0.1.0 --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f apps/github-product-worker/Dockerfile \
+  -t REGISTRY/barista-github-product-worker:0.1.0 --push .
 # Record registry-reported sha256 index digests. Tags are not executable identity.
 ```
 
