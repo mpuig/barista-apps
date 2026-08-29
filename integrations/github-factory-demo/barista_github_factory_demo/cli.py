@@ -101,6 +101,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     project.add_argument("--title", default="Barista product program")
     project.add_argument("--project-number", type=int)
+    project.add_argument(
+        "--public", action="store_true", help="Make the disposable demo board public."
+    )
     project.add_argument("--github-token-env", default="BARISTA_GITHUB_PROJECT_TOKEN")
     return parser
 
@@ -174,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
             owner_kind=args.owner_kind,
             title=args.title,
             project_number=args.project_number,
+            public=args.public,
         )
         print(json.dumps(project, indent=2, sort_keys=True))
         return 0

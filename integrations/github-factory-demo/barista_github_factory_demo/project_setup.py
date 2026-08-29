@@ -27,6 +27,7 @@ def setup_project(
     owner_kind: str,
     title: str,
     project_number: int | None = None,
+    public: bool = False,
     client: httpx.Client | None = None,
 ) -> dict:
     """Create or validate one project and its bounded presentation fields."""
@@ -83,7 +84,7 @@ def setup_project(
             data = graphql(
                 """mutation CreateProject($owner: ID!, $title: String!) {
                   createProjectV2(input: {ownerId: $owner, title: $title}) {
-                    projectV2 { id number title url fields(first: 100) { nodes {
+                    projectV2 { id number title url public fields(first: 100) { nodes {
                       ... on ProjectV2Field { id name }
                       ... on ProjectV2SingleSelectField { id name }
                     } } }
@@ -99,7 +100,7 @@ def setup_project(
                     f"""query ExistingProject($owner: String!, $number: Int!) {{
                   {root}(login: $owner) {{
                     projectV2(number: $number) {{
-                      id number title url
+                      id number title url public
                       fields(first: 100) {{ nodes {{
                         ... on ProjectV2Field {{ id name }}
                         ... on ProjectV2SingleSelectField {{ id name }}
@@ -114,6 +115,16 @@ def setup_project(
             )
         if not isinstance(project, dict) or not isinstance(project.get("id"), str):
             raise ProjectProjectionError("configured GitHub Project was not found")
+        if public and project.get("public") is not True:
+            graphql(
+                """mutation PublishProject($project: ID!) {
+                  updateProjectV2(input: {projectId: $project, public: true}) {
+                    projectV2 { id public }
+                  }
+                }""",
+                {"project": project["id"]},
+            )
+            project["public"] = True
         fields = project.get("fields", {}).get("nodes", [])
         if not isinstance(fields, list) or len(fields) > 100:
             raise ProjectProjectionError("GitHub Project fields were invalid")
@@ -161,6 +172,7 @@ def setup_project(
             "number": int(project["number"]),
             "title": str(project["title"]),
             "url": str(project["url"]),
+            "public": project.get("public") is True,
             "created_fields": created_fields,
         }
     finally:

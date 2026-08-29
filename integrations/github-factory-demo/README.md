@@ -129,7 +129,8 @@ reuse one by explicit number:
 export BARISTA_GITHUB_PROJECT_TOKEN='...project-only token...'
 uv run barista-github-demo project-setup \
   --owner OWNER \
-  --title 'Barista product program'
+  --title 'Barista product program' \
+  --public
 # Or: --project-number N
 ```
 
