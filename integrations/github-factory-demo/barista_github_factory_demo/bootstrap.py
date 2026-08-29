@@ -253,7 +253,7 @@ class GitHubAdmin:
         document = {
             "name": "web",
             "active": True,
-            "events": ["issues", "issue_comment"],
+            "events": ["issues", "issue_comment", "pull_request"],
             "config": {
                 "url": url,
                 "content_type": "json",
@@ -336,6 +336,9 @@ def setup_demo(
     reuse: bool,
     github: GitHubAdmin | None = None,
     client: BaristaClient | None = None,
+    product_manifests: tuple[tuple[Path, str], ...] = (),
+    product_image: str | None = None,
+    product_digest: str | None = None,
 ) -> dict:
     parsed = urlparse(webhook_url)
     if (
@@ -383,6 +386,15 @@ def setup_demo(
         image=worker_image,
         digest=worker_digest,
     )
+    product_parts = (bool(product_manifests), bool(product_image), bool(product_digest))
+    if any(product_parts) and not all(product_parts):
+        raise ValueError("product manifests require one image and digest")
+    product_apps = [
+        _load_manifest(
+            path, name=name, image=str(product_image), digest=str(product_digest)
+        )
+        for path, name in product_manifests
+    ]
     admin = github or GitHubAdmin(token)
     repo = admin.ensure_repository(owner, repository, reuse=reuse)
     if repo.get("full_name") != f"{owner}/{repository}":
@@ -407,6 +419,14 @@ def setup_demo(
         "triage_workload_digest": triage_digest,
         "worker_app": worker_name,
         "worker_workload_digest": worker_digest,
+        "product_apps": [
+            {
+                "name": app["name"],
+                "version": app["version"],
+                "workload_digest": product_digest,
+            }
+            for app in product_apps
+        ],
     }
     # Record external resources before Host API mutation. A failed app install
     # therefore still leaves enough non-secret identity for explicit teardown.
@@ -417,6 +437,8 @@ def setup_demo(
         host.install_app(factory, idempotency_key=f"github-demo-install-{factory_name}")
         host.install_app(triage, idempotency_key=f"github-demo-install-{triage_name}")
         host.install_app(worker, idempotency_key=f"github-demo-install-{worker_name}")
+        for app in product_apps:
+            host.install_app(app, idempotency_key=f"github-demo-install-{app['name']}")
     finally:
         if own_client:
             host.close()

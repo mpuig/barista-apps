@@ -51,7 +51,24 @@ def _resolved(*, existing: bool = True) -> dict:
                                     {"id": "progress-option", "name": "In Progress"},
                                     {"id": "done-option", "name": "Done"},
                                 ],
-                            }
+                            },
+                            {
+                                "id": "PVTSSF_type-1",
+                                "name": "Work Type",
+                                "options": [
+                                    {"id": "feature-option", "name": "Feature"}
+                                ],
+                            },
+                            {
+                                "id": "PVTF_program",
+                                "name": "Program",
+                                "dataType": "TEXT",
+                            },
+                            {
+                                "id": "PVTF_attempt",
+                                "name": "Attempt",
+                                "dataType": "NUMBER",
+                            },
                         ]
                     },
                     "items": {"nodes": items},
@@ -122,6 +139,36 @@ def test_existing_project_item_is_updated_from_canonical_status():
     assert "project-only-token" not in repr(requests)
 
 
+def test_program_details_are_written_from_controller_owned_values():
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        document = json.loads(request.content)
+        requests.append(document)
+        if "ResolveProject" in document["query"]:
+            return httpx.Response(200, json=_resolved())
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "updateProjectV2ItemFieldValue": {
+                        "projectV2Item": {"id": "PVTI_item-1"}
+                    }
+                }
+            },
+        )
+
+    _projector(handler).sync(
+        "https://github.com/acme/demo/issues/7",
+        "running",
+        {"work_type": "Feature", "program": "program-7", "attempt": 2},
+    )
+    variables = [request["variables"] for request in requests[1:]]
+    assert any(value.get("option") == "feature-option" for value in variables)
+    assert any(value.get("text") == "program-7" for value in variables)
+    assert any(value.get("number") == 2.0 for value in variables)
+
+
 def test_missing_project_item_is_added_before_status_update():
     queries: list[str] = []
 
@@ -176,7 +223,9 @@ class RecordingProjector:
         self.fail = fail
         self.closed = False
 
-    def sync(self, issue_uri: str, status: str) -> ProjectProjection:
+    def sync(
+        self, issue_uri: str, status: str, details: dict | None = None
+    ) -> ProjectProjection:
         self.calls.append((issue_uri, status))
         if self.fail:
             raise RuntimeError("temporary Projects outage")

@@ -65,7 +65,11 @@ def test_empty_repository_is_seeded_through_contents_before_branch_files(monkeyp
             if created_readme:
                 return httpx.Response(
                     200,
-                    json={"content": base64.b64encode(SEED_FILES["README.md"].encode()).decode()},
+                    json={
+                        "content": base64.b64encode(
+                            SEED_FILES["README.md"].encode()
+                        ).decode()
+                    },
                 )
             return httpx.Response(404, json={"message": "not found"})
         if url.endswith("/contents/README.md") and method == "PUT":
@@ -139,6 +143,65 @@ def test_setup_seeds_webhook_installs_digest_pinned_apps_and_writes_non_secret_s
     assert "bootstrap-token" not in persisted
     assert "webhook-secret" not in persisted
     assert state_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_setup_installs_separate_product_stage_identities(tmp_path):
+    admin = Admin()
+    client = Client()
+    state = setup_demo(
+        token="bootstrap-token",
+        owner="acme",
+        repository="factory-demo",
+        webhook_url="https://demo.example/webhooks/github",
+        webhook_secret="webhook-secret",
+        factory_manifest=ROOT / "apps/factory/manifest.json",
+        factory_name="demo-factory",
+        factory_image="ghcr.io/acme/factory:demo",
+        factory_digest="sha256:" + "a" * 64,
+        triage_manifest=ROOT / "apps/github-issue-triage/manifest.json",
+        triage_name="demo-triage",
+        triage_image="ghcr.io/acme/triage:demo",
+        triage_digest="sha256:" + "b" * 64,
+        worker_manifest=ROOT / "apps/github-issue-worker/manifest.json",
+        worker_name="demo-worker",
+        worker_image="ghcr.io/acme/worker:demo",
+        worker_digest="sha256:" + "c" * 64,
+        state_path=tmp_path / "state.json",
+        reuse=True,
+        github=admin,
+        client=client,
+        product_manifests=(
+            (
+                ROOT / "apps/github-product-worker/github-brd-author.manifest.json",
+                "brd-author",
+            ),
+            (
+                ROOT
+                / "apps/github-product-worker/github-feature-planner.manifest.json",
+                "planner",
+            ),
+            (
+                ROOT / "apps/github-product-worker/github-feature-worker.manifest.json",
+                "feature-worker",
+            ),
+        ),
+        product_image="ghcr.io/acme/product:demo",
+        product_digest="sha256:" + "d" * 64,
+    )
+    assert [install[0]["name"] for install in client.installs[-3:]] == [
+        "brd-author",
+        "planner",
+        "feature-worker",
+    ]
+    assert all(
+        install[0]["workload"]["digest"] == "sha256:" + "d" * 64
+        for install in client.installs[-3:]
+    )
+    assert [app["name"] for app in state["product_apps"]] == [
+        "brd-author",
+        "planner",
+        "feature-worker",
+    ]
 
 
 def test_setup_failure_keeps_teardown_identity_without_secrets(tmp_path):

@@ -43,6 +43,9 @@ class ControllerConfig:
     factory_app: str = "factory@0.1.0"
     triage_app: str = "github-issue-triage"
     worker_app: str = "github-issue-worker"
+    brd_author_app: str = "github-brd-author"
+    planner_app: str = "github-feature-planner"
+    feature_worker_app: str = "github-feature-worker"
     base_ref: str = "main"
     database: Path = Path("github-factory-demo.sqlite3")
     result_directory: Path = Path("github-factory-results")
@@ -182,6 +185,15 @@ class ControllerConfig:
             worker_app=os.environ.get(
                 "BARISTA_FACTORY_WORKER_APP", "github-issue-worker"
             ),
+            brd_author_app=os.environ.get(
+                "BARISTA_FACTORY_BRD_AUTHOR_APP", "github-brd-author"
+            ),
+            planner_app=os.environ.get(
+                "BARISTA_FACTORY_PLANNER_APP", "github-feature-planner"
+            ),
+            feature_worker_app=os.environ.get(
+                "BARISTA_FACTORY_FEATURE_WORKER_APP", "github-feature-worker"
+            ),
             base_ref=os.environ.get("BARISTA_GITHUB_BASE_REF", "main"),
             database=Path(
                 os.environ.get("BARISTA_GITHUB_DEMO_DB", "github-factory-demo.sqlite3")
@@ -218,6 +230,9 @@ class ControllerConfig:
             "factory_app": self.factory_app,
             "triage_app": self.triage_app,
             "worker_app": self.worker_app,
+            "brd_author_app": self.brd_author_app,
+            "planner_app": self.planner_app,
+            "feature_worker_app": self.feature_worker_app,
             "base_ref": self.base_ref,
             "database": str(self.database),
             "result_directory": str(self.result_directory),
@@ -241,6 +256,9 @@ class ControllerConfig:
 
 DEFAULT_TRIAGE_COMMAND = ["/usr/local/bin/barista-demo-issue-triage"]
 DEFAULT_WORKER_COMMAND = ["/usr/local/bin/barista-demo-issue-worker"]
+DEFAULT_BRD_AUTHOR_COMMAND = ["/usr/local/bin/barista-demo-brd-author"]
+DEFAULT_PLANNER_COMMAND = ["/usr/local/bin/barista-demo-feature-planner"]
+DEFAULT_FEATURE_WORKER_COMMAND = ["/usr/local/bin/barista-demo-feature-worker"]
 
 
 def triage_command_from_env() -> list[str]:
@@ -249,6 +267,22 @@ def triage_command_from_env() -> list[str]:
 
 def worker_command_from_env() -> list[str]:
     return _command_from_env("BARISTA_FACTORY_WORKER_COMMAND", DEFAULT_WORKER_COMMAND)
+
+
+def brd_author_command_from_env() -> list[str]:
+    return _command_from_env(
+        "BARISTA_FACTORY_BRD_AUTHOR_COMMAND", DEFAULT_BRD_AUTHOR_COMMAND
+    )
+
+
+def planner_command_from_env() -> list[str]:
+    return _command_from_env("BARISTA_FACTORY_PLANNER_COMMAND", DEFAULT_PLANNER_COMMAND)
+
+
+def feature_worker_command_from_env() -> list[str]:
+    return _command_from_env(
+        "BARISTA_FACTORY_FEATURE_WORKER_COMMAND", DEFAULT_FEATURE_WORKER_COMMAND
+    )
 
 
 def _command_from_env(name: str, default: list[str]) -> list[str]:

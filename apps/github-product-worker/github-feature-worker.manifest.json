@@ -1,0 +1,30 @@
+{
+  "schema_version": "v1alpha1",
+  "version": "0.1.0",
+  "workload": {
+    "image": "ghcr.io/mpuig/barista-github-product-worker:0.1.0",
+    "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "architectures": [
+      "aarch64",
+      "x86_64"
+    ],
+    "entrypoint": [
+      "/bin/sh",
+      "-c",
+      "sleep infinity"
+    ],
+    "working_dir": "/work",
+    "readiness": {
+      "type": "none"
+    }
+  },
+  "name": "github-feature-worker",
+  "description": "Deterministic feature implementer for the product-program reference app.",
+  "metadata": {
+    "sh.barista.github-factory-demo": {
+      "command": [
+        "/usr/local/bin/barista-demo-feature-worker"
+      ]
+    }
+  }
+}

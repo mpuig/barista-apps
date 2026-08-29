@@ -59,6 +59,58 @@ def test_issue_claim_compiles_to_one_runner_owned_factory_run(tmp_path: Path):
     assert "secret" not in str(document).lower()
 
 
+def test_program_claims_select_fixed_stage_apps_and_branches(tmp_path: Path):
+    config = ControllerConfig(
+        repository="https://github.com/acme/demo",
+        webhook_secret="secret",
+        github_token="token",
+        database=tmp_path / "db",
+        result_directory=tmp_path / "results",
+    )
+    brd = build_factory_run(
+        config,
+        Claim(
+            "brd",
+            config.repository,
+            12,
+            config.repository + "/issues/12",
+            "accepted",
+            "github-62924231c5-issue-12-attempt-1",
+            workflow_kind="program_brd",
+            program_id="program-12",
+        ),
+    ).to_document()
+    feature = build_factory_run(
+        config,
+        Claim(
+            "feature",
+            config.repository,
+            20,
+            config.repository + "/issues/20",
+            "accepted",
+            "github-62924231c5-issue-20-attempt-1",
+            workflow_kind="feature",
+            program_id="program-12",
+            feature_id="status-api",
+        ),
+    ).to_document()
+    assert brd["operation"] == "product-brief"
+    assert brd["input"]["value"]["worker_app"] == "github-brd-author"
+    assert brd["input"]["value"]["acceptance"]["command"][-1] == "brd"
+    assert (
+        brd["deliveries"]["change"]["options"]["head_branch"]
+        == "barista/program-12-brd"
+    )
+    assert feature["operation"] == "issue-sdlc"
+    assert feature["input"]["value"]["worker_app"] == "github-feature-worker"
+    assert feature["input"]["value"]["acceptance"]["command"][-1] == "status-api"
+    assert (
+        feature["deliveries"]["change"]["options"]["head_branch"]
+        == "barista/program-12-status-api"
+    )
+    assert "token" not in repr(brd) + repr(feature)
+
+
 def test_run_and_branch_identity_are_stable_across_webhook_retries(tmp_path: Path):
     config = ControllerConfig(
         repository="https://github.com/acme/demo",

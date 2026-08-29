@@ -48,6 +48,7 @@ def test_beta_images_use_node_registry_response_digests():
     text = DEPLOY.read_text()
     assert "127.0.0.1:5000/barista-factory" in text
     assert "127.0.0.1:5000/barista-github-issue-worker" in text
+    assert "127.0.0.1:5000/barista-github-product-worker" in text
     assert "docker-content-digest:" in text.lower()
     assert "^sha256:[0-9a-f]{64}$" in text
     assert "docker inspect" not in text
@@ -102,6 +103,9 @@ def test_bootstrap_uses_separate_github_cli_authority_and_exact_image_state():
     assert "github-factory-images.json" in text
     assert 'factory_name="github-demo-factory"' in text
     assert 'worker_name="github-issue-worker"' in text
+    assert '"github-brd-author"' in text
+    assert '"github-feature-planner"' in text
+    assert '"github-feature-worker"' in text
     assert (
         'webhook_url="https://github-factory.beta.barista.sh/webhooks/github"' in text
     )
