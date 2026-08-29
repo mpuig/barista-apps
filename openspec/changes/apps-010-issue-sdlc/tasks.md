@@ -31,4 +31,4 @@
 - [x] 5.1 Add offline unclear → question → authorized answer → implementation → tests → draft acceptance.
 - [x] 5.2 Add dishonest cases for unauthorized comments, self-loops, duplicate/stale answers, failed tests, malformed questions, and moving bases.
 - [x] 5.3 Run affected packages, standalone acceptance, supply-chain, and strict OpenSpec.
-- [ ] 5.4 Deploy reviewed digest-pinned workers with a separately scoped model credential and run a disposable real-GitHub conversational acceptance.
+- [x] 5.4 Deploy reviewed digest-pinned triage and implementation workers with separate app authority and run a disposable real-GitHub conversational acceptance.
