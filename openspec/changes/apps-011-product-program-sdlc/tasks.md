@@ -35,6 +35,6 @@
 - [x] 5.1 Seed one-container backend-served frontend plus SQLite presentation application.
 - [x] 5.2 Add offline incomplete brief → clarification → BRD PR → merge → feature plan/issues → gated PRs → final acceptance.
 - [x] 5.3 Add security mutations for approval, dependencies, publication, project authority, and credential isolation.
-- [ ] 5.4 Run Apps suites, supply-chain checks, strict OpenSpec, and current-head CI.
+- [x] 5.4 Run Apps suites, supply-chain checks, strict OpenSpec, and current-head CI.
 - [ ] 5.5 Deploy digest-pinned Apps images and perform disposable managed GitHub acceptance.
 - [ ] 5.6 Record evidence and visual walkthrough artifacts.
