@@ -40,8 +40,8 @@ def setup_project(
         raise ValueError("project number is outside the supported bound")
 
     owned = client is None
+    endpoint = "https://api.github.com/graphql"
     api = client or httpx.Client(
-        base_url="https://api.github.com/graphql",
         timeout=15,
         headers={
             "Authorization": f"Bearer {token}",
@@ -53,7 +53,7 @@ def setup_project(
 
     def graphql(query: str, variables: dict) -> dict:
         try:
-            response = api.post("", json={"query": query, "variables": variables})
+            response = api.post(endpoint, json={"query": query, "variables": variables})
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -123,13 +123,13 @@ def setup_project(
             if isinstance(field, dict) and isinstance(field.get("name"), str)
         }
         created_fields: list[str] = []
-        if "Type" not in names:
+        if "Work Type" not in names:
             graphql(
                 """mutation CreateTypeField($project: ID!) {
                   createProjectV2Field(input: {
                     projectId: $project,
                     dataType: SINGLE_SELECT,
-                    name: "Type",
+                    name: "Work Type",
                     singleSelectOptions: [
                       {name: "Program", color: PURPLE, description: "Product program"},
                       {name: "BRD", color: BLUE, description: "Product brief approval"},
@@ -141,7 +141,7 @@ def setup_project(
                 }""",
                 {"project": project["id"]},
             )
-            created_fields.append("Type")
+            created_fields.append("Work Type")
         for name, data_type in _FIELDS:
             if name in names:
                 continue

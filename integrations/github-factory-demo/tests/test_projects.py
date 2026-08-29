@@ -91,6 +91,7 @@ def test_existing_project_item_is_updated_from_canonical_status():
     requests: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://api.github.com/graphql"
         document = json.loads(request.content)
         requests.append(document)
         if "ResolveProject" in document["query"]:
