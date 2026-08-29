@@ -27,6 +27,27 @@
 - Inverted the independently checked question-delivery target comparison. `test_wrong_question_target_refuses_comment_and_preserves_session` failed because the dishonest result posted instead of raising; the comparison was restored and the named test passed.
 - Allowed `needs_input` to enter the ready implementation branch. `test_needs_input_stops_before_implementation_and_returns_verified_question` failed when an implementation worker was created; the closed state branch was restored and the named test passed.
 
-## Pending managed acceptance
+## Managed real-GitHub acceptance
 
-Build and install reviewed digest-pinned Factory, triage, and implementation worker images with the controller update, then run one disposable real-GitHub clarification flow. No model credential is needed for the deterministic reference acceptance.
+Reviewed Apps revision `c56b1ca974280c41272a9e4de363191ec0f8c64d` was deployed additively after PR #47 passed all 15 required CI jobs. The controller health check reported the separate Factory, triage, and implementation app identities. Registry-returned image identities were:
+
+- Factory: `127.0.0.1:5000/barista-factory:0.6.0@sha256:8283d65ab0a7d90f23f873d7e6c66109cd85de319a7a9d1da9d41259d505737b`
+- Triage: `127.0.0.1:5000/barista-github-issue-triage:0.1.0@sha256:c14ec78e22c4fcb412bce23b4f2b5369b9719acf947910875122c1e2f79bfbbd`
+- Implementation: `127.0.0.1:5000/barista-github-issue-worker:0.2.0@sha256:ecb2846af6ddfa4582bfb39ccc53fdcd0f9a5d9b274ab54bad7376b82ecf013b`
+
+The disposable real-GitHub flow passed through an unclear issue, a verified correlated question, one authorized answer, a fresh second attempt, independent acceptance, and a verified draft pull request:
+
+- Issue: `https://github.com/mpuig/barista-factory-demo/issues/5`
+- Question: `https://github.com/mpuig/barista-factory-demo/issues/5#issuecomment-5460565839`
+- Question digest: `sha256:c093d6f353ba87e4ec1c89ab1475255ce93fd68d39bd01d653c3eb87bad7fe5a`
+- Authorized answer: `https://github.com/mpuig/barista-factory-demo/issues/5#issuecomment-5460566055`
+- Draft PR: `https://github.com/mpuig/barista-factory-demo/pull/6`
+- Run: `github-0853c04f40-issue-5-attempt-2`
+- Factory result: `sha256:4a4a70ecc76050dcd188abc49ce527ab26c3d3d2368bd47e66362368b10ccb81`
+- Integrated patch: `sha256:e7cd2b1b89f0da792a62e3c9dcc3f0bdf7da20e6f2b0769f638db8cfa5bb3cdb`
+- Base: `42155f201a0da9db0e969d8cf9eb2907465337c5`
+- Head: `33ac2c4914c3c2d72513bcd609547aa7a0c5556a`
+
+GitHub reported the pull request open and draft with the exact base, head, branch `barista/issue-5`, and patch marker. The controller reported attempt 2 succeeded with one correlated answer and `verified_for_review=true`. No issue-5 Factory, triage, implementation, or acceptance sessions remained after successful collection and delivery.
+
+An earlier issue-4 attempt encountered `HostAPIError: HTTP 502` after Factory deployment changed the shared `/etc/barista` directory to mode `0700`, preventing the unprivileged Cloud gateway from reading its mTLS CA. The failed attempt and triage session were preserved for bounded forensics. PR #47 changed deployment and provisioning to mode `0711` while retaining the controller environment at mode `0600`; its mutation test failed when restored to `0700`. After production repair, node-event ingestion resumed and the successful issue-5 acceptance above completed.
