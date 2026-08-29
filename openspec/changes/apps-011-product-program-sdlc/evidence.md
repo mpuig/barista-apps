@@ -26,7 +26,7 @@
 
 Reviewed revision `056633996769a6c6e43d35c3352d069e58393d42` was deployed additively to beta. The controller remained active with project projection disabled until separate authority became available; `/etc/barista` remained mode 0711 and the root-owned controller environment remained mode 0600. Registry-returned Factory, triage, and worker digests remained unchanged from the accepted images.
 
-A separately created project credential was supplied through `~/.config/barista/github-project-token` at mode 0600. Live setup created and then idempotently reused `https://github.com/users/mpuig/projects/4`. GitHub verified the default `Status` options `Todo`, `In Progress`, and `Done`, plus `Work Type`, `Program`, `Feature`, `Attempt`, `Dependency`, `Result`, and `PR`. No credential value was printed or placed in argv.
+A separately created project credential was supplied through `~/.config/barista/github-project-token` at mode 0600. Live setup created and then idempotently reused `https://github.com/users/mpuig/projects/4`. Explicit `--public` publication returned `public=true`, and an unauthenticated request returned HTTP 200. GitHub verified the default `Status` options `Todo`, `In Progress`, and `Done`, plus `Work Type`, `Program`, `Feature`, `Attempt`, `Dependency`, `Result`, and `PR`. No credential value was printed or placed in argv.
 
 The first live call exposed two contract mismatches that offline mocks did not: posting to a path-bearing `httpx` base URL produced `/graphql/`, and GitHub reserves the custom field name `Type`. The adapter now posts to the exact absolute `/graphql` endpoint, endpoint tests assert that URL, and setup uses `Work Type`. The partially created project was explicitly reused rather than duplicated.
 

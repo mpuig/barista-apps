@@ -16,6 +16,17 @@ def test_existing_project_with_presentation_fields_is_reused_without_mutation():
         requests.append(document)
         if "ProjectOwner" in document["query"]:
             return httpx.Response(200, json={"data": {"user": {"id": "U_owner"}}})
+        if "PublishProject" in document["query"]:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "updateProjectV2": {
+                            "projectV2": {"id": "PVT_project", "public": True}
+                        }
+                    }
+                },
+            )
         return httpx.Response(
             200,
             json={
@@ -26,6 +37,7 @@ def test_existing_project_with_presentation_fields_is_reused_without_mutation():
                             "number": 4,
                             "title": "Barista product program",
                             "url": "https://github.com/users/acme/projects/4",
+                            "public": False,
                             "fields": {
                                 "nodes": [
                                     {"id": f"field-{name}", "name": name}
@@ -53,6 +65,7 @@ def test_existing_project_with_presentation_fields_is_reused_without_mutation():
         owner_kind="user",
         title="Barista product program",
         project_number=4,
+        public=True,
         client=httpx.Client(
             base_url="https://api.github.test/graphql",
             transport=httpx.MockTransport(handler),
@@ -62,7 +75,8 @@ def test_existing_project_with_presentation_fields_is_reused_without_mutation():
     assert result["created"] is False
     assert result["number"] == 4
     assert result["created_fields"] == []
-    assert len(requests) == 2
+    assert result["public"] is True
+    assert len(requests) == 3
     assert "project-token" not in repr(requests)
 
 
