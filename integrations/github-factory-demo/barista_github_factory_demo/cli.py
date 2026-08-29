@@ -11,6 +11,7 @@ from .app import create_app
 from .bootstrap import setup_demo, teardown_demo
 from .config import ControllerConfig
 from .live_acceptance import run_live_acceptance
+from .project_setup import setup_project
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_STATE = Path(".barista-github-demo.json")
@@ -90,6 +91,17 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exercise clarification, an authorized answer, and a fresh attempt.",
     )
+
+    project = sub.add_parser(
+        "project-setup", help="Create or validate the non-authoritative demo project."
+    )
+    project.add_argument("--owner", required=True)
+    project.add_argument(
+        "--owner-kind", choices=("user", "organization"), default="user"
+    )
+    project.add_argument("--title", default="Barista product program")
+    project.add_argument("--project-number", type=int)
+    project.add_argument("--github-token-env", default="BARISTA_GITHUB_PROJECT_TOKEN")
     return parser
 
 
@@ -154,6 +166,16 @@ def main(argv: list[str] | None = None) -> int:
             clarify=args.clarify,
         )
         print(json.dumps(evidence, indent=2, sort_keys=True))
+        return 0
+    if args.command == "project-setup":
+        project = setup_project(
+            token=_secret(args.github_token_env),
+            owner=args.owner,
+            owner_kind=args.owner_kind,
+            title=args.title,
+            project_number=args.project_number,
+        )
+        print(json.dumps(project, indent=2, sort_keys=True))
         return 0
     raise AssertionError(args.command)
 

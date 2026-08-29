@@ -38,6 +38,10 @@ def provision(
     github_token_file: Path,
     host_token_file: Path,
     webhook_secret_file: Path,
+    project_token_file: Path | None,
+    project_number: int | None,
+    project_owner: str | None,
+    project_owner_kind: str,
     cp_host: str,
     ssh_key: Path,
     known_hosts: Path,
@@ -47,31 +51,61 @@ def provision(
         raise SystemExit("repository must be canonical https://github.com/OWNER/REPO")
     github_token = _read_secret(github_token_file, "GitHub token")
     host_token = _read_secret(host_token_file, "Host API token")
+    if (project_token_file is None) != (project_number is None):
+        raise SystemExit(
+            "project token file and project number must be supplied together"
+        )
+    project_token = (
+        _read_secret(project_token_file, "GitHub project token")
+        if project_token_file is not None
+        else None
+    )
+    if project_token is not None and project_token == github_token:
+        raise SystemExit("forge and project authority must use separate credentials")
+    if project_number is not None and not 1 <= project_number <= 10000:
+        raise SystemExit("project number is outside the supported bound")
+    if project_owner_kind not in {"user", "organization"}:
+        raise SystemExit("project owner kind is invalid")
     webhook_secret_file = webhook_secret_file.expanduser()
     if webhook_secret_file.exists():
         webhook_secret = _read_secret(webhook_secret_file, "webhook secret")
     else:
         webhook_secret_file.parent.mkdir(parents=True, exist_ok=True)
         webhook_secret = secrets.token_hex(32)
-        descriptor = os.open(webhook_secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        descriptor = os.open(
+            webhook_secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(webhook_secret + "\n")
     if not re.fullmatch(r"[0-9a-f]{64}", webhook_secret):
         raise SystemExit("webhook secret must be 32 bytes encoded as lowercase hex")
 
-    environment = "".join(
-        [
-            _environment_line("BARISTA_GITHUB_REPOSITORY", repository),
-            _environment_line("BARISTA_GITHUB_WEBHOOK_SECRET", webhook_secret),
-            _environment_line("BARISTA_GITHUB_TOKEN", github_token),
-            _environment_line("BARISTA_FACTORY_APP", "github-demo-factory@0.1.0"),
-            _environment_line("BARISTA_FACTORY_TRIAGE_APP", "github-issue-triage"),
-            _environment_line("BARISTA_FACTORY_WORKER_APP", "github-issue-worker"),
-            _environment_line("BARISTA_GITHUB_BASE_REF", "main"),
-            _environment_line("BARISTA_HOST_API_ENDPOINT", "https://beta.barista.sh"),
-            _environment_line("BARISTA_HOST_API_TOKEN", host_token),
-        ]
-    ).encode()
+    environment_lines = [
+        _environment_line("BARISTA_GITHUB_REPOSITORY", repository),
+        _environment_line("BARISTA_GITHUB_WEBHOOK_SECRET", webhook_secret),
+        _environment_line("BARISTA_GITHUB_TOKEN", github_token),
+        _environment_line("BARISTA_FACTORY_APP", "github-demo-factory@0.1.0"),
+        _environment_line("BARISTA_FACTORY_TRIAGE_APP", "github-issue-triage"),
+        _environment_line("BARISTA_FACTORY_WORKER_APP", "github-issue-worker"),
+        _environment_line("BARISTA_GITHUB_BASE_REF", "main"),
+        _environment_line("BARISTA_HOST_API_ENDPOINT", "https://beta.barista.sh"),
+        _environment_line("BARISTA_HOST_API_TOKEN", host_token),
+    ]
+    if project_token is not None and project_number is not None:
+        environment_lines.extend(
+            [
+                _environment_line("BARISTA_GITHUB_PROJECT_TOKEN", project_token),
+                _environment_line("BARISTA_GITHUB_PROJECT_NUMBER", str(project_number)),
+                _environment_line(
+                    "BARISTA_GITHUB_PROJECT_OWNER",
+                    project_owner or repository.split("/", 4)[3],
+                ),
+                _environment_line(
+                    "BARISTA_GITHUB_PROJECT_OWNER_KIND", project_owner_kind
+                ),
+            ]
+        )
+    environment = "".join(environment_lines).encode()
 
     known_hosts = known_hosts.expanduser()
     known_hosts.parent.mkdir(parents=True, exist_ok=True)
@@ -114,12 +148,14 @@ def provision(
     import httpx
 
     response = httpx.get(public_url.rstrip("/") + "/healthz", timeout=30)
-    if response.status_code != 200 or response.json().get("repository") != repository.removeprefix(
-        "https://github.com/"
-    ):
+    if response.status_code != 200 or response.json().get(
+        "repository"
+    ) != repository.removeprefix("https://github.com/"):
         raise SystemExit("public controller health check failed")
     print(f"controller healthy for {repository}")
-    print(f"webhook secret retained at {webhook_secret_file}; its value was not printed")
+    print(
+        f"webhook secret retained at {webhook_secret_file}; its value was not printed"
+    )
 
 
 def main() -> int:
@@ -136,14 +172,24 @@ def main() -> int:
         type=Path,
         default=Path.home() / ".config/barista/github-factory-webhook-secret",
     )
+    parser.add_argument("--project-token-file", type=Path)
+    parser.add_argument("--project-number", type=int)
+    parser.add_argument("--project-owner")
+    parser.add_argument(
+        "--project-owner-kind", choices=("user", "organization"), default="user"
+    )
     parser.add_argument("--cp-host", default="46.225.59.43")
-    parser.add_argument("--ssh-key", type=Path, default=Path.home() / ".ssh/barista_hetzner")
+    parser.add_argument(
+        "--ssh-key", type=Path, default=Path.home() / ".ssh/barista_hetzner"
+    )
     parser.add_argument(
         "--known-hosts",
         type=Path,
         default=Path.home() / ".ssh/known_hosts.barista-deploy",
     )
-    parser.add_argument("--public-url", default="https://github-factory.beta.barista.sh")
+    parser.add_argument(
+        "--public-url", default="https://github-factory.beta.barista.sh"
+    )
     args = parser.parse_args()
     provision(**vars(args))
     return 0

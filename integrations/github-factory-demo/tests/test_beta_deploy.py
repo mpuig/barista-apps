@@ -17,9 +17,9 @@ def test_beta_deploy_parses_and_refuses_mutation_before_remote_access():
     )
     assert parsed.returncode == 0, parsed.stderr
     text = DEPLOY.read_text()
-    preflight = text.index('status --porcelain --untracked-files=normal')
+    preflight = text.index("status --porcelain --untracked-files=normal")
     remote_main = text.index("git ls-remote --exit-code")
-    first_remote_mutation = text.index("copy_source \"$CP_HOST\"")
+    first_remote_mutation = text.index('copy_source "$CP_HOST"')
     assert preflight < first_remote_mutation
     assert remote_main < first_remote_mutation
     assert 'DEPLOY_REV" != "$REMOTE_MAIN' in text
@@ -70,7 +70,9 @@ def test_controller_unit_is_unprivileged_hardened_and_secret_separated():
         "--host 127.0.0.1 --port 8098",
     ):
         assert expected in text
-    assert "controller environment not provisioned; unit installed but not started" in text
+    assert (
+        "controller environment not provisioned; unit installed but not started" in text
+    )
 
 
 def test_provisioning_sends_secret_environment_on_stdin_not_argv():
@@ -79,8 +81,17 @@ def test_provisioning_sends_secret_environment_on_stdin_not_argv():
     assert "github_token_file" in text
     assert "host_token_file" in text
     assert "webhook_secret_file" in text
-    assert "github_token" not in text[text.index("remote = (") : text.index("subprocess.run([*ssh")]
+    assert "project_token_file" in text
+    assert (
+        "github_token"
+        not in text[text.index("remote = (") : text.index("subprocess.run([*ssh")]
+    )
+    assert (
+        "project_token"
+        not in text[text.index("remote = (") : text.index("subprocess.run([*ssh")]
+    )
     assert "BARISTA_GITHUB_TOKEN=" not in text
+    assert "BARISTA_GITHUB_PROJECT_TOKEN=" not in text
     assert "BARISTA_HOST_API_TOKEN=" not in text
     assert "chmod 600 /etc/barista/github-factory-demo.env.tmp" in text
 
@@ -91,6 +102,8 @@ def test_bootstrap_uses_separate_github_cli_authority_and_exact_image_state():
     assert "github-factory-images.json" in text
     assert 'factory_name="github-demo-factory"' in text
     assert 'worker_name="github-issue-worker"' in text
-    assert 'webhook_url="https://github-factory.beta.barista.sh/webhooks/github"' in text
+    assert (
+        'webhook_url="https://github-factory.beta.barista.sh/webhooks/github"' in text
+    )
     assert 'triage_name="github-issue-triage"' in text
     assert "bootstrap_token" not in text[text.index("print(json.dumps") :]

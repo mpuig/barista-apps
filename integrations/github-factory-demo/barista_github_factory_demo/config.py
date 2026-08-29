@@ -10,6 +10,22 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 _LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_PROJECT_STATES = (
+    "accepted",
+    "running",
+    "awaiting_input",
+    "refused",
+    "succeeded",
+    "failed",
+)
+DEFAULT_PROJECT_STATUS_OPTIONS = (
+    ("accepted", "Todo"),
+    ("running", "In Progress"),
+    ("awaiting_input", "Todo"),
+    ("refused", "Done"),
+    ("succeeded", "Done"),
+    ("failed", "Done"),
+)
 
 
 def _required(name: str) -> str:
@@ -35,6 +51,14 @@ class ControllerConfig:
     concurrency: int = 2
     authorized_responders: tuple[str, ...] = ()
     controller_login: str | None = None
+    github_project_token: str | None = None
+    github_project_number: int | None = None
+    github_project_owner: str | None = None
+    github_project_owner_kind: str = "user"
+    github_project_status_field: str = "Status"
+    github_project_status_options: tuple[tuple[str, str], ...] = (
+        DEFAULT_PROJECT_STATUS_OPTIONS
+    )
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.repository)
@@ -65,6 +89,43 @@ class ControllerConfig:
         )
         if any(_LOGIN.fullmatch(login) is None for login in logins):
             raise ValueError("GitHub responder logins are invalid")
+        projection_values = (self.github_project_token, self.github_project_number)
+        if any(value is not None for value in projection_values) and not all(
+            value is not None for value in projection_values
+        ):
+            raise ValueError(
+                "project token and project number must be configured together"
+            )
+        if (
+            self.github_project_token is not None
+            and self.github_project_token == self.github_token
+        ):
+            raise ValueError(
+                "forge and project authority must use separate credentials"
+            )
+        if self.github_project_number is not None and not (
+            1 <= self.github_project_number <= 10000
+        ):
+            raise ValueError("GitHub project number is outside the supported bound")
+        owner = self.github_project_owner or parts[0]
+        if _LOGIN.fullmatch(owner) is None:
+            raise ValueError("GitHub project owner is invalid")
+        if self.github_project_owner_kind not in {"user", "organization"}:
+            raise ValueError("GitHub project owner kind is invalid")
+        if (
+            not self.github_project_status_field
+            or len(self.github_project_status_field) > 64
+        ):
+            raise ValueError("GitHub project status field is invalid")
+        options = dict(self.github_project_status_options)
+        if (
+            len(options) != len(_PROJECT_STATES)
+            or set(options) != set(_PROJECT_STATES)
+            or any(not value or len(value) > 64 for value in options.values())
+        ):
+            raise ValueError(
+                "GitHub project status options must map every controller state"
+            )
 
     @property
     def full_name(self) -> str:
@@ -74,6 +135,18 @@ class ControllerConfig:
     def responders(self) -> frozenset[str]:
         configured = self.authorized_responders or (self.full_name.split("/", 1)[0],)
         return frozenset(login.casefold() for login in configured)
+
+    @property
+    def project_enabled(self) -> bool:
+        return self.github_project_number is not None
+
+    @property
+    def project_owner(self) -> str:
+        return self.github_project_owner or self.full_name.split("/", 1)[0]
+
+    @property
+    def project_status_options(self) -> dict[str, str]:
+        return dict(self.github_project_status_options)
 
     @classmethod
     def from_env(cls) -> ControllerConfig:
@@ -85,6 +158,19 @@ class ControllerConfig:
             ).split(",")
             if item.strip()
         )
+        project_options_raw = os.environ.get("BARISTA_GITHUB_PROJECT_STATUS_OPTIONS")
+        project_options = DEFAULT_PROJECT_STATUS_OPTIONS
+        if project_options_raw:
+            parsed = json.loads(project_options_raw)
+            if not isinstance(parsed, dict) or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in parsed.items()
+            ):
+                raise ValueError(
+                    "BARISTA_GITHUB_PROJECT_STATUS_OPTIONS must be a string map"
+                )
+            project_options = tuple(parsed.items())
+        project_number_raw = os.environ.get("BARISTA_GITHUB_PROJECT_NUMBER")
         return cls(
             repository=repository,
             webhook_secret=_required("BARISTA_GITHUB_WEBHOOK_SECRET"),
@@ -112,6 +198,18 @@ class ControllerConfig:
             concurrency=int(os.environ.get("BARISTA_GITHUB_CONCURRENCY", "2")),
             authorized_responders=responders,
             controller_login=os.environ.get("BARISTA_GITHUB_CONTROLLER_LOGIN") or None,
+            github_project_token=os.environ.get("BARISTA_GITHUB_PROJECT_TOKEN") or None,
+            github_project_number=(
+                int(project_number_raw) if project_number_raw else None
+            ),
+            github_project_owner=os.environ.get("BARISTA_GITHUB_PROJECT_OWNER") or None,
+            github_project_owner_kind=os.environ.get(
+                "BARISTA_GITHUB_PROJECT_OWNER_KIND", "user"
+            ),
+            github_project_status_field=os.environ.get(
+                "BARISTA_GITHUB_PROJECT_STATUS_FIELD", "Status"
+            ),
+            github_project_status_options=project_options,
         )
 
     def public_document(self) -> dict:
@@ -128,6 +226,16 @@ class ControllerConfig:
             "concurrency": self.concurrency,
             "authorized_responders": sorted(self.responders),
             "controller_login": self.controller_login,
+            "project": {
+                "enabled": self.project_enabled,
+                "owner": self.project_owner if self.project_enabled else None,
+                "owner_kind": self.github_project_owner_kind
+                if self.project_enabled
+                else None,
+                "number": self.github_project_number,
+                "status_field": self.github_project_status_field,
+                "status_options": self.project_status_options,
+            },
         }
 
 

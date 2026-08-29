@@ -66,6 +66,15 @@ class DeliveryStore:
                 disposition TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS project_projections (
+                issue_uri TEXT PRIMARY KEY,
+                desired_status TEXT NOT NULL,
+                projected_status TEXT,
+                item_id TEXT,
+                last_error TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            );
             """
         )
         columns = {
@@ -277,7 +286,10 @@ class DeliveryStore:
             row = self._connection.execute(
                 "SELECT * FROM deliveries WHERE delivery_id = ?", (delivery_id,)
             ).fetchone()
-        return self._document(row) if row is not None else None
+            projection = (
+                self._projection_row(row["issue_uri"]) if row is not None else None
+            )
+        return self._document(row, projection) if row is not None else None
 
     def get_issue(self, repository: str, issue_number: int) -> dict | None:
         with self._lock:
@@ -285,7 +297,61 @@ class DeliveryStore:
                 "SELECT * FROM deliveries WHERE repository = ? AND issue_number = ?",
                 (repository, issue_number),
             ).fetchone()
-        return self._document(row) if row is not None else None
+            projection = (
+                self._projection_row(row["issue_uri"]) if row is not None else None
+            )
+        return self._document(row, projection) if row is not None else None
+
+    def desire_projection(self, issue_uri: str, status: str) -> None:
+        """Durably record a projection target after canonical state commits."""
+        now = int(time.time())
+        with self._lock:
+            self._connection.execute(
+                """INSERT INTO project_projections
+                (issue_uri, desired_status, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(issue_uri) DO UPDATE SET
+                    desired_status = excluded.desired_status,
+                    updated_at = excluded.updated_at""",
+                (issue_uri, status, now),
+            )
+            self._connection.commit()
+
+    def projection_targets(self) -> list[tuple[str, str]]:
+        """Return canonical delivery states for startup reconciliation."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT issue_uri, status FROM deliveries ORDER BY created_at"
+            ).fetchall()
+        return [(str(row["issue_uri"]), str(row["status"])) for row in rows]
+
+    def projection_succeeded(self, issue_uri: str, status: str, item_id: str) -> None:
+        now = int(time.time())
+        with self._lock:
+            self._connection.execute(
+                """UPDATE project_projections SET projected_status = ?, item_id = ?,
+                last_error = NULL, attempts = attempts + 1, updated_at = ?
+                WHERE issue_uri = ? AND desired_status = ?""",
+                (status, item_id, now, issue_uri, status),
+            )
+            self._connection.commit()
+
+    def projection_failed(self, issue_uri: str, status: str, message: str) -> None:
+        sanitized = " ".join(str(message).split())[:500]
+        now = int(time.time())
+        with self._lock:
+            self._connection.execute(
+                """UPDATE project_projections SET last_error = ?,
+                attempts = attempts + 1, updated_at = ?
+                WHERE issue_uri = ? AND desired_status = ?""",
+                (sanitized, now, issue_uri, status),
+            )
+            self._connection.commit()
+
+    def _projection_row(self, issue_uri: str) -> sqlite3.Row | None:
+        return self._connection.execute(
+            "SELECT * FROM project_projections WHERE issue_uri = ?", (issue_uri,)
+        ).fetchone()
 
     def recoverable(self) -> list[Claim]:
         with self._lock:
@@ -316,8 +382,18 @@ class DeliveryStore:
         )
 
     @staticmethod
-    def _document(row: sqlite3.Row) -> dict:
+    def _document(row: sqlite3.Row, projection: sqlite3.Row | None = None) -> dict:
         result = json.loads(row["result_json"]) if row["result_json"] else None
+        projection_document = None
+        if projection is not None:
+            projection_document = {
+                "desired_status": projection["desired_status"],
+                "projected_status": projection["projected_status"],
+                "item_id": projection["item_id"],
+                "last_error": projection["last_error"],
+                "attempts": int(projection["attempts"]),
+                "updated_at": int(projection["updated_at"]),
+            }
         return {
             "delivery_id": row["delivery_id"],
             "repository": row["repository"],
@@ -338,4 +414,5 @@ class DeliveryStore:
             "error": row["error"],
             "created_at": int(row["created_at"]),
             "updated_at": int(row["updated_at"]),
+            "project_projection": projection_document,
         }
