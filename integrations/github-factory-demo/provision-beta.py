@@ -90,7 +90,7 @@ def provision(
         f"root@{cp_host}",
     ]
     remote = (
-        "set -e; install -d -o root -g root -m 0700 /etc/barista; "
+        "set -e; install -d -o root -g root -m 0711 /etc/barista; "
         "umask 077; cat > /etc/barista/github-factory-demo.env.tmp; "
         "chown root:root /etc/barista/github-factory-demo.env.tmp; "
         "chmod 600 /etc/barista/github-factory-demo.env.tmp; "
