@@ -133,7 +133,7 @@ uv run barista-github-demo project-setup \
 # Or: --project-number N
 ```
 
-Setup returns only non-secret project identity and adds missing `Type`,
+Setup returns only non-secret project identity and adds missing `Work Type`,
 `Program`, `Feature`, `Attempt`, `Dependency`, `Result`, and `PR` fields. The
 normal `Status` field is required by projection. Configure the controller with:
 

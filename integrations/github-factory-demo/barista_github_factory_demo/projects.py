@@ -61,8 +61,8 @@ class GitHubProjector:
         self._status_field = status_field
         self._status_options = dict(status_options)
         self._owned_client = client is None
+        self._endpoint = endpoint
         self._client = client or httpx.Client(
-            base_url=endpoint,
             timeout=timeout,
             headers={
                 "Authorization": f"Bearer {token}",
@@ -183,7 +183,7 @@ class GitHubProjector:
     def _graphql(self, query: str, variables: dict) -> dict:
         try:
             response = self._client.post(
-                "", json={"query": query, "variables": variables}
+                self._endpoint, json={"query": query, "variables": variables}
             )
             response.raise_for_status()
             payload = response.json()

@@ -28,7 +28,7 @@
 - [x] 4.2 Project canonical issue status without making project fields authoritative.
 - [x] 4.3 Persist projection success/failure and keep workflow progress independent of projection availability.
 - [x] 4.4 Reconcile project fields from durable controller state after restart.
-- [ ] 4.5 Provision and validate the disposable presentation project with least project scopes.
+- [x] 4.5 Provision and validate the disposable presentation project with separate project authority.
 
 ## 5. Presentation application and acceptance
 

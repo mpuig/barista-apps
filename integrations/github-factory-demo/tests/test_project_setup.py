@@ -11,6 +11,7 @@ def test_existing_project_with_presentation_fields_is_reused_without_mutation():
     requests: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://api.github.com/graphql"
         document = json.loads(request.content)
         requests.append(document)
         if "ProjectOwner" in document["query"]:
@@ -30,7 +31,7 @@ def test_existing_project_with_presentation_fields_is_reused_without_mutation():
                                     {"id": f"field-{name}", "name": name}
                                     for name in (
                                         "Status",
-                                        "Type",
+                                        "Work Type",
                                         "Program",
                                         "Feature",
                                         "Attempt",
@@ -114,7 +115,7 @@ def test_new_project_receives_bounded_demo_fields():
     assert result["created"] is True
     assert result["number"] == 8
     assert result["created_fields"] == [
-        "Type",
+        "Work Type",
         "Program",
         "Feature",
         "Attempt",
