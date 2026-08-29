@@ -126,7 +126,9 @@ cd /opt/barista-apps/integrations/github-factory-demo
 uv sync --frozen
 id barista >/dev/null 2>&1 || useradd --system --home-dir /opt/barista-apps --shell /usr/sbin/nologin barista
 install -d -o barista -g barista -m 0700 /var/lib/barista-github-factory-demo
-install -d -o root -g root -m 0700 /etc/barista
+# Shared with the Cloud gateway's mTLS files. Keep filenames unlistable while
+# allowing service users to traverse to files whose own modes grant access.
+install -d -o root -g root -m 0711 /etc/barista
 chown -R barista:barista /opt/barista-apps
 
 cat > /etc/systemd/system/barista-github-factory-demo.service <<'SVC'

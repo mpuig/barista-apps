@@ -35,6 +35,15 @@ def test_beta_deploy_is_additive_and_excludes_environment_and_state():
     assert "/etc/barista/github-factory-demo.env.tmp" not in text
 
 
+def test_controller_preserves_shared_cloud_mtls_directory_traversal():
+    deploy = DEPLOY.read_text()
+    provision = PROVISION.read_text()
+    assert "install -d -o root -g root -m 0711 /etc/barista" in deploy
+    assert "install -d -o root -g root -m 0711 /etc/barista" in provision
+    assert "-m 0700 /etc/barista" not in deploy
+    assert "-m 0700 /etc/barista" not in provision
+
+
 def test_beta_images_use_node_registry_response_digests():
     text = DEPLOY.read_text()
     assert "127.0.0.1:5000/barista-factory" in text
