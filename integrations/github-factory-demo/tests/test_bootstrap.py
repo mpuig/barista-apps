@@ -24,8 +24,8 @@ class Admin:
         self.calls.append(("repo", owner, repository, reuse))
         return {"full_name": f"{owner}/{repository}", "private": False}
 
-    def ensure_seed(self, owner, repository):
-        self.calls.append(("seed", owner, repository))
+    def ensure_seed(self, owner, repository, *, allow_existing=False):
+        self.calls.append(("seed", owner, repository, allow_existing))
 
     def ensure_webhook(self, owner, repository, *, url, secret):
         self.calls.append(("webhook", owner, repository, url, secret))
@@ -90,6 +90,29 @@ def test_empty_repository_is_seeded_through_contents_before_branch_files(monkeyp
     put_documents = [kwargs["json"] for method, _, kwargs in calls if method == "PUT"]
     assert "branch" not in put_documents[0]
     assert all(document.get("branch") == "main" for document in put_documents[1:])
+
+
+def test_reuse_preserves_different_existing_seed_without_blocking_reconciliation(
+    monkeypatch,
+):
+    calls = []
+
+    def request(method, url, **kwargs):
+        calls.append((method, url))
+        if url.endswith("/git/ref/heads/main"):
+            return httpx.Response(200, json={"ref": "refs/heads/main"})
+        if "/contents/" in url and method == "GET":
+            return httpx.Response(
+                200,
+                json={"content": base64.b64encode(b"older accepted seed\n").decode()},
+            )
+        raise AssertionError((method, url, kwargs))
+
+    monkeypatch.setattr(httpx, "request", request)
+    GitHubAdmin("bootstrap-token").ensure_seed("acme", "demo", allow_existing=True)
+    assert not any(method == "PUT" for method, _ in calls)
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        GitHubAdmin("bootstrap-token").ensure_seed("acme", "demo")
 
 
 def test_setup_seeds_webhook_installs_digest_pinned_apps_and_writes_non_secret_state(

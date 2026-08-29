@@ -232,7 +232,7 @@ class ProgramRunExecutor:
                     "workspace": {
                         "kind": "sh.barista.git.repository",
                         "uri": self.config.repository,
-                        "ref": approved,
+                        "ref": self.config.base_ref,
                     }
                 },
             }
@@ -298,7 +298,7 @@ class ProgramRunExecutor:
                     "workspace": {
                         "kind": "sh.barista.git.repository",
                         "uri": self.config.repository,
-                        "ref": assembled,
+                        "ref": self.config.base_ref,
                     }
                 },
             }

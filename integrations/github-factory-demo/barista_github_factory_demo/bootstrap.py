@@ -121,7 +121,14 @@ class GitHubAdmin:
             raise TypeError("GitHub repository creation response is invalid")
         return created
 
-    def ensure_seed(self, owner: str, repository: str, *, branch: str = "main") -> None:
+    def ensure_seed(
+        self,
+        owner: str,
+        repository: str,
+        *,
+        branch: str = "main",
+        allow_existing: bool = False,
+    ) -> None:
         ref_response = httpx.request(
             "GET",
             f"{self._api}/repos/{quote(owner)}/{quote(repository)}/git/ref/heads/{quote(branch, safe='')}",
@@ -177,7 +184,7 @@ class GitHubAdmin:
                     ).decode("utf-8")
                 except (KeyError, ValueError, UnicodeDecodeError) as exc:
                     raise RuntimeError("existing seed README is unreadable") from exc
-                if existing_readme != SEED_README:
+                if existing_readme != SEED_README and not allow_existing:
                     raise RuntimeError(
                         "existing seed file differs; refusing to overwrite: README.md"
                     )
@@ -215,7 +222,7 @@ class GitHubAdmin:
                     raise RuntimeError(
                         f"existing seed file is unreadable: {path}"
                     ) from exc
-                if existing != content:
+                if existing != content and not allow_existing:
                     raise RuntimeError(
                         f"existing seed file differs; refusing to overwrite: {path}"
                     )
@@ -399,7 +406,7 @@ def setup_demo(
     repo = admin.ensure_repository(owner, repository, reuse=reuse)
     if repo.get("full_name") != f"{owner}/{repository}":
         raise RuntimeError("GitHub returned a different repository identity")
-    admin.ensure_seed(owner, repository)
+    admin.ensure_seed(owner, repository, allow_existing=reuse)
     hook_id = admin.ensure_webhook(
         owner,
         repository,
