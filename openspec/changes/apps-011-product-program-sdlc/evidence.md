@@ -15,6 +15,7 @@
 - Supply-chain check passed.
 - Strict `apps-011-product-program-sdlc` OpenSpec validation passed.
 - PR #49 passed all 15 required CI jobs and merged as `056633996769a6c6e43d35c3352d069e58393d42`.
+- The live-contract correction in PR #51 passed all 15 required CI jobs and merged as `abf84bddab6d485be4786d526c490c95966cba4a`.
 - GitHub GraphQL introspection confirmed the `createProjectV2`, `createProjectV2Field`, `addProjectV2ItemById`, and `updateProjectV2ItemFieldValue` mutations and their current input/payload shapes.
 
 ## Mutation evidence
@@ -28,3 +29,7 @@ Reviewed revision `056633996769a6c6e43d35c3352d069e58393d42` was deployed additi
 A separately created project credential was supplied through `~/.config/barista/github-project-token` at mode 0600. Live setup created and then idempotently reused `https://github.com/users/mpuig/projects/4`. GitHub verified the default `Status` options `Todo`, `In Progress`, and `Done`, plus `Work Type`, `Program`, `Feature`, `Attempt`, `Dependency`, `Result`, and `PR`. No credential value was printed or placed in argv.
 
 The first live call exposed two contract mismatches that offline mocks did not: posting to a path-bearing `httpx` base URL produced `/graphql/`, and GitHub reserves the custom field name `Type`. The adapter now posts to the exact absolute `/graphql` endpoint, endpoint tests assert that URL, and setup uses `Work Type`. The partially created project was explicitly reused rather than duplicated.
+
+Corrected revision `abf84bddab6d485be4786d526c490c95966cba4a` was deployed from clean remote `main`. The controller environment was reprovisioned over SSH stdin with separate runtime-forge and project files, all checked at mode 0600 without printing their contents. Public health reports Project #4 enabled; the source marker matches the deployed revision, `/etc/barista` remains mode 0711, and `/etc/barista/github-factory-demo.env` remains root-owned mode 0600.
+
+Startup reconciliation added historical issues #4 and #5 to Project #4 and converged their terminal Status to `Done`. The controller recorded matching desired/projected states, opaque item IDs, no error, and one attempt. A live authority mutation then moved issue #5 manually to `In Progress`; its canonical controller state remained `succeeded`. Restart reconciliation restored the Project field to `Done`, and the durable projection attempt count advanced to two. This proves the board is a corrective read model rather than workflow authority.
