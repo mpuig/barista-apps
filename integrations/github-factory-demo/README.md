@@ -20,7 +20,9 @@ There is no second provider scheduler.
   repository with Issues read/write, Contents read/write, Pull requests
   read/write, and Metadata read.
 - `BARISTA_HOST_API_TOKEN` is runtime Factory authority.
-- GitHub and Host API tokens stay in the trusted controller. They are not put in
+- `BARISTA_GITHUB_PROJECT_TOKEN` is optional Projects v2 projection authority.
+  Keep it separate from runtime forge authority and scope it to project access.
+- GitHub, Projects, and Host API tokens stay in the trusted controller. They are not put in
   App Run envelopes, Factory/worker environments, objective files, argv, clone
   URLs, result documents, or webhook responses.
 - The issue title and body are untrusted objective data. They cannot change the
@@ -110,6 +112,53 @@ root:root mode 0600, restarts the unit, and verifies both loopback and public
 health without printing any credential. Re-running source deployment preserves
 this file and `/var/lib/barista-github-factory-demo`.
 
+### Optional GitHub Projects board
+
+GitHub Projects is a presentation-only projection. SQLite controller state
+remains authoritative: moving a card cannot advance work, and restart
+reconciliation writes the canonical state back to the board. Projection failure
+is durable and retryable but does not turn a successful Factory workflow into a
+failure.
+
+Use a separate classic token with `read:project` and `project`, or an equivalent
+least-scope fine-grained Projects credential. The currently authenticated `gh`
+token must have those scopes before live setup. Create a project, or safely
+reuse one by explicit number:
+
+```sh
+export BARISTA_GITHUB_PROJECT_TOKEN='...project-only token...'
+uv run barista-github-demo project-setup \
+  --owner OWNER \
+  --title 'Barista product program'
+# Or: --project-number N
+```
+
+Setup returns only non-secret project identity and adds missing `Type`,
+`Program`, `Feature`, `Attempt`, `Dependency`, `Result`, and `PR` fields. The
+normal `Status` field is required by projection. Configure the controller with:
+
+```sh
+export BARISTA_GITHUB_PROJECT_NUMBER=N
+export BARISTA_GITHUB_PROJECT_OWNER=OWNER
+export BARISTA_GITHUB_PROJECT_OWNER_KIND=user  # or organization
+```
+
+Default state mapping is `accepted/awaiting_input → Todo`, `running → In
+Progress`, and terminal states → `Done`. Override display names only with the
+closed JSON object `BARISTA_GITHUB_PROJECT_STATUS_OPTIONS`; all six canonical
+controller states must remain mapped.
+
+For beta, keep the project token in its own mode-0600 file and add these options
+to provisioning:
+
+```sh
+uv run python provision-beta.py \
+  --repository https://github.com/mpuig/barista-factory-demo \
+  --github-token-file /secure/path/github-factory-runtime-token \
+  --project-token-file /secure/path/github-project-token \
+  --project-number N --project-owner mpuig
+```
+
 ## Bootstrap
 
 Expose the controller at a stable public HTTPS URL. The webhook URL must end in
@@ -152,6 +201,10 @@ export BARISTA_FACTORY_WORKER_APP='github-issue-worker'
 export BARISTA_GITHUB_AUTHORIZED_RESPONDERS='OWNER'
 # Identify the runtime bot so its own marker comments cannot resume work.
 export BARISTA_GITHUB_CONTROLLER_LOGIN='barista-factory-bot'
+# Optional, separate non-authoritative Projects projection:
+# export BARISTA_GITHUB_PROJECT_TOKEN='...project-only token...'
+# export BARISTA_GITHUB_PROJECT_NUMBER=1
+# export BARISTA_GITHUB_PROJECT_OWNER=OWNER
 uv run barista-github-demo serve --host 0.0.0.0 --port 8098
 ```
 

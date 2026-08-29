@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from .config import ControllerConfig
 from .executor import FactoryRunExecutor
+from .projects import GitHubProjector, Projector
 from .store import Claim, DeliveryStore
 
 _DELIVERY_ID = re.compile(r"^[A-Za-z0-9-]{1,128}$")
@@ -34,22 +35,46 @@ class DemoController:
         *,
         store: DeliveryStore | None = None,
         executor: FactoryRunExecutor | None = None,
+        projector: Projector | None = None,
     ):
         self.config = config
         self.store = store or DeliveryStore(config.database)
         self.executor = executor or FactoryRunExecutor(config)
+        if projector is not None:
+            self.projector = projector
+        elif config.project_enabled:
+            assert config.github_project_token is not None
+            assert config.github_project_number is not None
+            self.projector = GitHubProjector(
+                token=config.github_project_token,
+                owner=config.project_owner,
+                owner_kind=config.github_project_owner_kind,
+                project_number=config.github_project_number,
+                status_field=config.github_project_status_field,
+                status_options=config.project_status_options,
+            )
+        else:
+            self.projector = None
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=config.concurrency,
             thread_name_prefix="github-factory",
+        )
+        self._projection_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="github-project",
         )
         self._scheduled: set[str] = set()
         self._lock = threading.Lock()
 
     def start(self) -> None:
+        if self.projector is not None:
+            for issue_uri, status in self.store.projection_targets():
+                self._queue_projection(issue_uri, status)
         for claim in self.store.recoverable():
             self.submit(claim)
 
     def submit(self, claim: Claim) -> None:
+        self._queue_projection(claim.issue_uri, claim.status)
         with self._lock:
             if claim.run_name in self._scheduled:
                 return
@@ -59,14 +84,18 @@ class DemoController:
     def _process(self, claim: Claim) -> None:
         try:
             self.store.mark_running(claim.delivery_id)
+            self._queue_projection(claim.issue_uri, "running")
             result = self.executor.execute(claim)
             workflow_state = result.get("workflow_state")
             if workflow_state == "needs_input":
                 self.store.await_input(claim.delivery_id, result)
+                self._queue_projection(claim.issue_uri, "awaiting_input")
             elif workflow_state == "refused":
                 self.store.refuse(claim.delivery_id, result)
+                self._queue_projection(claim.issue_uri, "refused")
             else:
                 self.store.succeed(claim.delivery_id, result)
+                self._queue_projection(claim.issue_uri, "succeeded")
         # This is the asynchronous process boundary: every provider, integrity,
         # forge, filesystem, and programming failure must become durable status.
         except Exception as exc:  # noqa: BLE001
@@ -87,12 +116,42 @@ class DemoController:
                     f"{code or type(exc).__name__}: sensitive failure details redacted"
                 )
             self.store.fail(claim.delivery_id, message)
+            self._queue_projection(claim.issue_uri, "failed")
         finally:
             with self._lock:
                 self._scheduled.discard(claim.run_name)
 
+    def _queue_projection(self, issue_uri: str, status: str) -> None:
+        if self.projector is None:
+            return
+        self.store.desire_projection(issue_uri, status)
+        self._projection_pool.submit(self._project, issue_uri, status)
+
+    def _project(self, issue_uri: str, status: str) -> None:
+        assert self.projector is not None
+        try:
+            result = self.projector.sync(issue_uri, status)
+            self.store.projection_succeeded(issue_uri, status, result.item_id)
+        except Exception as exc:  # noqa: BLE001 - optional integration boundary
+            message = redact_text(
+                f"{type(exc).__name__}: {exc}",
+                (
+                    self.config.github_project_token or "",
+                    self.config.github_token,
+                    self.config.webhook_secret,
+                ),
+            )
+            try:
+                assert_no_high_confidence_secrets(message)
+            except SecretLeak:
+                message = "ProjectProjectionError: sensitive failure details redacted"
+            self.store.projection_failed(issue_uri, status, message)
+
     def close(self) -> None:
         self._pool.shutdown(wait=True, cancel_futures=False)
+        self._projection_pool.shutdown(wait=True, cancel_futures=False)
+        if self.projector is not None:
+            self.projector.close()
         self.store.close()
 
 
@@ -131,6 +190,7 @@ def create_app(
             "factory_app": selected.factory_app,
             "triage_app": selected.triage_app,
             "worker_app": selected.worker_app,
+            "project": selected.public_document()["project"],
         }
 
     @app.get("/runs/{delivery_id}")
