@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,43 @@ class DeliveryStore:
                 attempts INTEGER NOT NULL DEFAULT 0,
                 details_json TEXT,
                 updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS activity_projections (
+                program_id TEXT PRIMARY KEY,
+                revision INTEGER NOT NULL,
+                content_digest TEXT NOT NULL,
+                document_json TEXT NOT NULL,
+                published_digest TEXT,
+                last_error TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS program_events (
+                program_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT,
+                phase TEXT,
+                actor TEXT,
+                links_json TEXT NOT NULL,
+                attributes_json TEXT NOT NULL,
+                occurred_at INTEGER NOT NULL,
+                PRIMARY KEY(program_id, event_id),
+                FOREIGN KEY(program_id) REFERENCES programs(program_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_program_events_order
+                ON program_events(program_id, occurred_at, event_id);
+            CREATE TABLE IF NOT EXISTS deployment_requests (
+                request_id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                result_json TEXT,
+                error TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(program_id) REFERENCES programs(program_id)
             );
             """
         )
@@ -342,6 +380,23 @@ class DeliveryStore:
             updated = self._connection.execute(
                 "SELECT * FROM deliveries WHERE delivery_id = ?", (row["delivery_id"],)
             ).fetchone()
+            if row["program_id"]:
+                self.record_program_event(
+                    str(row["program_id"]),
+                    f"clarification-received-{attempt}",
+                    "decision.received",
+                    "Clarification received",
+                    phase="running",
+                    summary="An authorized responder supplied the missing product decision.",
+                    links=[
+                        {
+                            "rel": "comment",
+                            "label": "Clarification",
+                            "url": f"{row['issue_uri']}#issuecomment-{comment_id}",
+                        }
+                    ],
+                    occurred_at=now,
+                )
             return self._claim(updated, created=True), "accepted"
 
     def fail(self, delivery_id: str, message: str) -> None:
@@ -463,7 +518,7 @@ class DeliveryStore:
     def ensure_program(self, program_id: str, claim: Claim) -> None:
         now = int(time.time())
         with self._lock:
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """INSERT INTO programs
                 (program_id, repository, issue_number, issue_uri, status,
                  brd_delivery_id, created_at, updated_at)
@@ -479,10 +534,37 @@ class DeliveryStore:
                     now,
                 ),
             )
+            created = cursor.rowcount == 1
             self._connection.commit()
+        if created:
+            self.record_program_event(
+                program_id,
+                "program-created",
+                "work.created",
+                "Product program opened",
+                phase="queued",
+                summary="The source controller accepted the root issue as a new program.",
+                links=[{"rel": "issue", "label": "Root issue", "url": claim.issue_uri}],
+                occurred_at=now,
+            )
 
     def record_brd_waiting(self, program_id: str) -> None:
         self._update_program(program_id, status="brd_needs_input", error=None)
+        with self._lock:
+            attempt_row = self._connection.execute(
+                """SELECT d.attempt FROM deliveries d JOIN programs p
+                ON p.brd_delivery_id = d.delivery_id WHERE p.program_id = ?""",
+                (program_id,),
+            ).fetchone()
+        attempt = int(attempt_row["attempt"]) if attempt_row is not None else 1
+        self.record_program_event(
+            program_id,
+            f"clarification-requested-{attempt}",
+            "decision.requested",
+            "Clarification requested",
+            phase="waiting",
+            summary="The source ended the bounded attempt and requested a fresh human answer.",
+        )
 
     def record_brd_running(self, program_id: str) -> None:
         self._update_program(program_id, status="brd_running", error=None)
@@ -507,6 +589,16 @@ class DeliveryStore:
             brd_head_commit=head,
             brd_path=f"docs/brd/program-{self._program_issue(program_id)}.md",
             error=None,
+        )
+        self.record_program_event(
+            program_id,
+            "brd-published",
+            "proposal.published",
+            "BRD published for review",
+            phase="waiting",
+            summary="Factory verified and published a draft; merge remained a human gate.",
+            links=[{"rel": "pull-request", "label": "BRD pull request", "url": uri}],
+            attributes={"head_commit": head},
         )
 
     def claim_external_delivery(self, delivery_id: str, event: str) -> bool:
@@ -582,6 +674,24 @@ class DeliveryStore:
             approved_at=approved_at,
             error=None,
         )
+        repository = self._program_repository(program_id)
+        self.record_program_event(
+            program_id,
+            "brd-approved",
+            "decision.approved",
+            "BRD approved by merge",
+            phase="succeeded",
+            actor=actor,
+            links=[
+                {
+                    "rel": "commit",
+                    "label": "Approved commit",
+                    "url": f"{repository}/commit/{commit}",
+                }
+            ],
+            attributes={"commit": commit, "digest": digest},
+            occurred_at=approved_at,
+        )
 
     def save_plan(self, program_id: str, plan: dict, digest: str) -> None:
         now = int(time.time())
@@ -624,6 +734,16 @@ class DeliveryStore:
                     ),
                 )
             self._connection.commit()
+        self.record_program_event(
+            program_id,
+            "plan-validated",
+            "plan.validated",
+            "Dependency plan validated",
+            phase="succeeded",
+            summary="The source independently parsed a bounded acyclic plan.",
+            attributes={"digest": digest},
+            occurred_at=now,
+        )
 
     def program_for_issue(self, issue_uri: str) -> dict | None:
         with self._lock:
@@ -657,6 +777,16 @@ class DeliveryStore:
             if cursor.rowcount != 1:
                 raise KeyError((program_id, feature_id))
             self._connection.commit()
+        self.record_program_event(
+            program_id,
+            f"feature-{feature_id}-published",
+            "work.published",
+            f"{feature_id} published",
+            phase="queued",
+            links=[{"rel": "issue", "label": "Feature issue", "url": uri}],
+            attributes={"feature": feature_id},
+            occurred_at=now,
+        )
 
     def unpublished_features(self, program_id: str) -> list[dict]:
         with self._lock:
@@ -724,10 +854,38 @@ class DeliveryStore:
             error=None,
         )
         self._update_program(program_id, status="implementing")
+        self.record_program_event(
+            program_id,
+            f"feature-{feature_id}-verified",
+            "change.verified",
+            f"{feature_id} candidate verified",
+            phase="waiting",
+            summary="Factory published a draft change for independent human review.",
+            links=[
+                {"rel": "pull-request", "label": "Feature pull request", "url": str(draft["uri"])}
+            ],
+            attributes={"head_commit": str(metadata["head_commit"])},
+        )
 
     def merge_feature(self, program_id: str, feature_id: str, commit: str) -> None:
         self._update_feature(
             program_id, feature_id, status="merged", merged_commit=commit, error=None
+        )
+        repository = self._program_repository(program_id)
+        self.record_program_event(
+            program_id,
+            f"feature-{feature_id}-merged",
+            "change.merged",
+            f"{feature_id} merged",
+            phase="succeeded",
+            links=[
+                {
+                    "rel": "commit",
+                    "label": "Merged commit",
+                    "url": f"{repository}/commit/{commit}",
+                }
+            ],
+            attributes={"commit": commit},
         )
 
     def all_features_merged(self, program_id: str) -> bool:
@@ -775,11 +933,323 @@ class DeliveryStore:
             acceptance_json=json.dumps(result, sort_keys=True, separators=(",", ":")),
             error=None,
         )
+        commit = str(result["assembled_commit"])
+        self.record_program_event(
+            program_id,
+            "program-accepted",
+            "work.accepted",
+            "Exact assembled commit accepted",
+            phase="succeeded",
+            summary="Authority-stripped acceptance verified the assembled product.",
+            links=[
+                {
+                    "rel": "commit",
+                    "label": "Accepted commit",
+                    "url": f"{self._program_repository(program_id)}/commit/{commit}",
+                }
+            ],
+            attributes={"commit": commit},
+        )
 
     def fail_program(self, program_id: str, message: str) -> None:
-        self._update_program(
-            program_id, status="failed", error=" ".join(str(message).split())[:1000]
+        sanitized = " ".join(str(message).split())[:1000]
+        self._update_program(program_id, status="failed", error=sanitized)
+        failure_id = hashlib.sha256(sanitized.encode()).hexdigest()[:12]
+        self.record_program_event(
+            program_id,
+            f"program-failed-{failure_id}",
+            "work.failed",
+            "Program failed",
+            phase="failed",
+            summary=sanitized,
         )
+
+    def record_program_event(
+        self,
+        program_id: str,
+        event_id: str,
+        event_type: str,
+        title: str,
+        *,
+        summary: str | None = None,
+        phase: str | None = None,
+        actor: str | None = None,
+        links: list[dict] | None = None,
+        attributes: dict[str, str] | None = None,
+        occurred_at: int | None = None,
+    ) -> None:
+        """Append one source event idempotently; an identity is immutable."""
+        document = (
+            event_type,
+            title,
+            summary,
+            phase,
+            actor,
+            json.dumps(links or [], sort_keys=True, separators=(",", ":")),
+            json.dumps(attributes or {}, sort_keys=True, separators=(",", ":")),
+            occurred_at or int(time.time()),
+        )
+        with self._lock:
+            existing = self._connection.execute(
+                """SELECT event_type, title, summary, phase, actor, links_json,
+                attributes_json, occurred_at FROM program_events
+                WHERE program_id = ? AND event_id = ?""",
+                (program_id, event_id),
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing)[:-1] != document[:-1]:
+                    raise ValueError("program event identity was reused with different content")
+                return
+            self._connection.execute(
+                """INSERT INTO program_events
+                (program_id, event_id, event_type, title, summary, phase, actor,
+                 links_json, attributes_json, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (program_id, event_id, *document),
+            )
+            self._connection.commit()
+
+    def program_events(self, program_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM program_events WHERE program_id = ?
+                ORDER BY occurred_at, event_id LIMIT 100""",
+                (program_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["event_id"],
+                "type": row["event_type"],
+                "title": row["title"],
+                **({"summary": row["summary"]} if row["summary"] else {}),
+                **({"phase": row["phase"]} if row["phase"] else {}),
+                "occurred_at": datetime.fromtimestamp(
+                    int(row["occurred_at"]), UTC
+                ).isoformat(),
+                **({"actor": row["actor"]} if row["actor"] else {}),
+                "links": json.loads(row["links_json"]),
+                "attributes": json.loads(row["attributes_json"]),
+            }
+            for row in rows
+        ]
+
+    def list_programs(self) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM programs ORDER BY created_at DESC LIMIT 100"
+            ).fetchall()
+            result = []
+            for row in rows:
+                features = self._connection.execute(
+                    "SELECT * FROM program_features WHERE program_id = ? ORDER BY ordinal",
+                    (row["program_id"],),
+                ).fetchall()
+                result.append(self._program_document(row, features))
+        return result
+
+    def desire_activity(self, program_id: str, document: dict) -> dict:
+        """Persist one canonical desired generic activity document.
+
+        Revision advances only when source-owned content changes. Projection
+        bookkeeping is excluded from the content, so retries and restarts replay
+        the same revision and bytes.
+        """
+        without_revision = dict(document)
+        without_revision.pop("revision", None)
+        source_raw = json.dumps(
+            without_revision, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        source_digest = "sha256:" + hashlib.sha256(source_raw.encode()).hexdigest()
+        now = int(time.time())
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM activity_projections WHERE program_id = ?", (program_id,)
+            ).fetchone()
+            if row is not None:
+                existing = json.loads(row["document_json"])
+                existing.pop("revision", None)
+                existing_raw = json.dumps(
+                    existing, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                )
+                existing_source_digest = (
+                    "sha256:" + hashlib.sha256(existing_raw.encode()).hexdigest()
+                )
+                if existing_source_digest == source_digest:
+                    return json.loads(row["document_json"])
+                revision = int(row["revision"]) + 1
+            else:
+                revision = 1
+            desired = {**without_revision, "revision": revision}
+            raw = json.dumps(
+                desired, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            )
+            digest = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+            self._connection.execute(
+                """INSERT INTO activity_projections
+                (program_id, revision, content_digest, document_json,
+                 published_digest, last_error, attempts, updated_at)
+                VALUES (?, ?, ?, ?, NULL, NULL, 0, ?)
+                ON CONFLICT(program_id) DO UPDATE SET
+                    revision = excluded.revision,
+                    content_digest = excluded.content_digest,
+                    document_json = excluded.document_json,
+                    last_error = NULL,
+                    updated_at = excluded.updated_at""",
+                (program_id, revision, digest, raw, now),
+            )
+            self._connection.commit()
+        return desired
+
+    def activity_target(self, program_id: str) -> dict | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM activity_projections
+                WHERE program_id = ?
+                AND (published_digest IS NULL OR published_digest != content_digest)""",
+                (program_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "program_id": row["program_id"],
+            "document": json.loads(row["document_json"]),
+            "content_digest": row["content_digest"],
+        }
+
+    def activity_targets(self) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM activity_projections
+                WHERE published_digest IS NULL OR published_digest != content_digest
+                ORDER BY updated_at, program_id LIMIT 100"""
+            ).fetchall()
+        return [
+            {
+                "program_id": row["program_id"],
+                "document": json.loads(row["document_json"]),
+                "content_digest": row["content_digest"],
+            }
+            for row in rows
+        ]
+
+    def activity_succeeded(self, program_id: str, digest: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                """UPDATE activity_projections
+                SET published_digest = ?, last_error = NULL, attempts = attempts + 1,
+                    updated_at = ?
+                WHERE program_id = ? AND content_digest = ?""",
+                (digest, int(time.time()), program_id, digest),
+            )
+            self._connection.commit()
+
+    def activity_failed(self, program_id: str, digest: str, message: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                """UPDATE activity_projections
+                SET last_error = ?, attempts = attempts + 1, updated_at = ?
+                WHERE program_id = ? AND content_digest = ?""",
+                (" ".join(str(message).split())[:1000], int(time.time()), program_id, digest),
+            )
+            self._connection.commit()
+
+    def claim_deployment(self, request_id: str, program_id: str) -> bool:
+        """Claim or recover one source action using its stable operation identity."""
+        now = int(time.time())
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM deployment_requests WHERE request_id = ?", (request_id,)
+            ).fetchone()
+            if row is not None:
+                if row["program_id"] != program_id:
+                    raise ValueError("deployment request changed program identity")
+                return row["state"] == "running"
+            self._connection.execute(
+                """INSERT INTO deployment_requests
+                (request_id, program_id, state, attempts, created_at, updated_at)
+                VALUES (?, ?, 'running', 1, ?, ?)""",
+                (request_id, program_id, now, now),
+            )
+            self._connection.commit()
+        return True
+
+    def complete_deployment(self, request_id: str, result: dict) -> None:
+        raw = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        now = int(time.time())
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT program_id FROM deployment_requests WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(request_id)
+            self._connection.execute(
+                """UPDATE deployment_requests
+                SET state = 'succeeded', result_json = ?, error = NULL, updated_at = ?
+                WHERE request_id = ? AND state = 'running'""",
+                (raw, now, request_id),
+            )
+            self._connection.commit()
+        self.record_program_event(
+            str(row["program_id"]),
+            "product-deployed",
+            "service.deployed",
+            "Accepted product deployed",
+            phase="succeeded",
+            summary="The source-side runner independently verified the public endpoint.",
+            links=[
+                {
+                    "rel": "endpoint",
+                    "label": "Open application",
+                    "url": str(result["endpoint"]),
+                }
+            ],
+            attributes={
+                "deployment_id": str(result["deployment_id"]),
+                "session_name": str(result["session_name"]),
+            },
+            occurred_at=now,
+        )
+
+    def fail_deployment(self, request_id: str, message: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                """UPDATE deployment_requests
+                SET state = 'failed', error = ?, updated_at = ?
+                WHERE request_id = ? AND state = 'running'""",
+                (" ".join(str(message).split())[:1000], int(time.time()), request_id),
+            )
+            self._connection.commit()
+
+    def latest_deployment(self, program_id: str) -> dict | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM deployment_requests
+                WHERE program_id = ? AND state = 'succeeded'
+                ORDER BY updated_at DESC LIMIT 1""",
+                (program_id,),
+            ).fetchone()
+        return self._deployment_document(row) if row is not None else None
+
+    def get_deployment(self, request_id: str) -> dict | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM deployment_requests WHERE request_id = ?", (request_id,)
+            ).fetchone()
+        return self._deployment_document(row) if row is not None else None
+
+    @staticmethod
+    def _deployment_document(row: sqlite3.Row) -> dict:
+        return {
+            "request_id": row["request_id"],
+            "program_id": row["program_id"],
+            "state": row["state"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+            "error": row["error"],
+            "attempts": int(row["attempts"]),
+            "created_at": int(row["created_at"]),
+            "updated_at": int(row["updated_at"]),
+        }
 
     def get_program(self, program_id: str) -> dict | None:
         with self._lock:

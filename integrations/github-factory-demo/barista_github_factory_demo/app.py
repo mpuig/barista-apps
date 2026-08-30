@@ -21,6 +21,7 @@ from barista_app_sdk.sensitive import (
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from .activity_projection import ActivityPublisher, DeploymentRunner, program_activity
 from .config import ControllerConfig
 from .executor import FactoryRunExecutor
 from .program import GitHubProgramForge, ProgramRunExecutor
@@ -43,6 +44,8 @@ class DemoController:
         projector: Projector | None = None,
         program_executor: ProgramRunExecutor | None = None,
         program_forge: GitHubProgramForge | None = None,
+        activity_publisher: ActivityPublisher | None = None,
+        deployment_runner: DeploymentRunner | None = None,
     ):
         self.config = config
         self.store = store or DeliveryStore(config.database)
@@ -66,6 +69,27 @@ class DemoController:
             )
         else:
             self.projector = None
+        if activity_publisher is not None:
+            self.activity_publisher = activity_publisher
+        elif config.activity_enabled:
+            assert config.activity_endpoint is not None
+            assert config.activity_token is not None
+            self.activity_publisher = ActivityPublisher(
+                config.activity_endpoint, config.activity_token
+            )
+        else:
+            self.activity_publisher = None
+        if deployment_runner is not None:
+            self.deployment_runner = deployment_runner
+        elif config.activity_deploy_enabled:
+            self.deployment_runner = DeploymentRunner(
+                config.activity_deploy_command,
+                config.activity_deploy_timeout_seconds,
+            )
+        else:
+            self.deployment_runner = None
+        self._activity_stop = threading.Event()
+        self._activity_thread: threading.Thread | None = None
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=config.concurrency,
             thread_name_prefix="github-factory",
@@ -85,6 +109,16 @@ class DemoController:
         if self.projector is not None:
             for issue_uri, status, details in self.store.projection_targets():
                 self._queue_projection(issue_uri, status, details)
+        if self.activity_publisher is not None:
+            for program in self.store.list_programs():
+                self._queue_activity_program(str(program["program_id"]))
+            if self.deployment_runner is not None:
+                self._activity_thread = threading.Thread(
+                    target=self._activity_action_loop,
+                    name="github-factory-activity-actions",
+                    daemon=True,
+                )
+                self._activity_thread.start()
         for claim in self.store.recoverable():
             self.submit(claim)
         for program_id, status in self.store.recoverable_programs():
@@ -342,6 +376,7 @@ class DemoController:
             self._project_program(program_id)
 
     def _project_program(self, program_id: str) -> None:
+        self._queue_activity_program(program_id)
         if self.projector is None:
             return
         program = self.store.get_program(program_id)
@@ -393,12 +428,161 @@ class DemoController:
                 },
             )
 
+    def _queue_activity_program(self, program_id: str) -> None:
+        if self.activity_publisher is None:
+            return
+        program = self.store.get_program(program_id)
+        if program is None:
+            return
+        delivery = self.store.get_issue(
+            str(program["repository"]), int(program["issue_number"])
+        )
+        deployment = self.store.latest_deployment(program_id)
+        journal = self.store.program_events(program_id)
+        self.store.desire_activity(
+            program_id,
+            program_activity(program, delivery, self.config, deployment, journal),
+        )
+        target = self.store.activity_target(program_id)
+        if target is not None:
+            self._projection_pool.submit(
+                self._publish_activity,
+                program_id,
+                target["document"],
+                target["content_digest"],
+            )
+
+    def _publish_activity(
+        self, program_id: str, document: dict, digest: str
+    ) -> None:
+        assert self.activity_publisher is not None
+        try:
+            self.activity_publisher.publish(program_id, document)
+            self.store.activity_succeeded(program_id, digest)
+        except Exception as exc:  # noqa: BLE001 - optional projection boundary
+            message = redact_text(
+                f"{type(exc).__name__}: {exc}",
+                (
+                    self.config.activity_token or "",
+                    self.config.github_token,
+                    self.config.github_project_token or "",
+                    self.config.host_api_token or "",
+                    self.config.webhook_secret,
+                ),
+            )
+            try:
+                assert_no_high_confidence_secrets(message)
+            except SecretLeak:
+                message = "ActivityProjectionError: sensitive failure details redacted"
+            self.store.activity_failed(program_id, digest, message)
+
+    def _activity_action_loop(self) -> None:
+        assert self.activity_publisher is not None
+        while not self._activity_stop.is_set():
+            try:
+                requests = [
+                    *self.activity_publisher.action_requests("requested"),
+                    *self.activity_publisher.action_requests("running"),
+                ]
+                seen: set[str] = set()
+                for request in requests:
+                    request_id = request.get("request_id")
+                    if not isinstance(request_id, str) or request_id in seen:
+                        continue
+                    seen.add(request_id)
+                    self._handle_activity_action(request)
+            except Exception:  # noqa: BLE001 - polling is optional and retryable
+                pass
+            self._activity_stop.wait(5.0)
+
+    def _handle_activity_action(self, request: dict) -> None:
+        assert self.activity_publisher is not None
+        assert self.deployment_runner is not None
+        request_id = request.get("request_id")
+        program_id = request.get("stream_id")
+        source_id = request.get("source_id")
+        if not all(
+            isinstance(value, str) for value in (request_id, program_id, source_id)
+        ):
+            return
+        assert isinstance(request_id, str)
+        assert isinstance(program_id, str)
+        assert isinstance(source_id, str)
+        if source_id != "software-factory" or request.get("action_id") != "deploy":
+            self.activity_publisher.resolve_action(
+                request_id,
+                source_id,
+                "failed",
+                message="The source does not implement this action.",
+            )
+            return
+        program = self.store.get_program(program_id)
+        if program is None or program.get("status") != "accepted":
+            self.activity_publisher.resolve_action(
+                request_id,
+                source_id,
+                "failed",
+                message="The exact accepted program is not available for deployment.",
+            )
+            return
+        if not self.store.claim_deployment(request_id, program_id):
+            self._resolve_stored_deployment(request_id, source_id)
+            return
+        self.activity_publisher.resolve_action(
+            request_id,
+            source_id,
+            "running",
+            message="The source-side deployment runner is verifying the accepted artifact.",
+        )
+        try:
+            result = self.deployment_runner.deploy(request_id, program)
+            self.store.complete_deployment(request_id, result)
+            self._queue_activity_program(program_id)
+            self.activity_publisher.resolve_action(
+                request_id,
+                source_id,
+                "succeeded",
+                message=result["message"],
+                links=result["links"],
+                artifacts=result["artifacts"],
+            )
+        except Exception as exc:  # noqa: BLE001 - durable action boundary
+            message = self._safe_failure(exc)
+            self.store.fail_deployment(request_id, message)
+            self.activity_publisher.resolve_action(
+                request_id, source_id, "failed", message=message
+            )
+
+    def _resolve_stored_deployment(self, request_id: str, source_id: str) -> None:
+        assert self.activity_publisher is not None
+        deployment = self.store.get_deployment(request_id)
+        if deployment is None:
+            return
+        result = deployment.get("result") or {}
+        if deployment["state"] == "succeeded":
+            self.activity_publisher.resolve_action(
+                request_id,
+                source_id,
+                "succeeded",
+                message=result.get("message"),
+                links=result.get("links", []),
+                artifacts=result.get("artifacts", []),
+            )
+        elif deployment["state"] == "failed":
+            self.activity_publisher.resolve_action(
+                request_id,
+                source_id,
+                "failed",
+                message=deployment.get("error"),
+            )
+
     def _safe_failure(self, exc: Exception) -> str:
         message = redact_text(
             f"{type(exc).__name__}: {exc}",
             (
                 self.config.github_token,
                 self.config.github_project_token or "",
+                self.config.activity_token or "",
                 self.config.webhook_secret,
                 os.environ.get("BARISTA_HOST_API_TOKEN", ""),
             ),
@@ -440,6 +624,9 @@ class DemoController:
             self.store.projection_failed(issue_uri, status, message)
 
     def close(self) -> None:
+        self._activity_stop.set()
+        if self._activity_thread is not None:
+            self._activity_thread.join(timeout=10.0)
         # Program transitions may release Factory claims, so drain that
         # producer before shutting down the Factory execution pool.
         self._program_pool.shutdown(wait=True, cancel_futures=False)
@@ -447,6 +634,8 @@ class DemoController:
         self._projection_pool.shutdown(wait=True, cancel_futures=False)
         if self.projector is not None:
             self.projector.close()
+        if self.activity_publisher is not None:
+            self.activity_publisher.close()
         self.program_forge.close()
         self.store.close()
 
@@ -489,6 +678,7 @@ def create_app(
             "brd_author_app": selected.brd_author_app,
             "planner_app": selected.planner_app,
             "feature_worker_app": selected.feature_worker_app,
+            "activity": selected.public_document()["activity"],
             "project": selected.public_document()["project"],
         }
 
@@ -517,7 +707,11 @@ def create_app(
         result = service.store.get_program(program_id)
         if result is None:
             raise HTTPException(status_code=404, detail="program not found")
-        return result
+        return {
+            **result,
+            "events": service.store.program_events(program_id),
+            "deployment": service.store.latest_deployment(program_id),
+        }
 
     @app.post("/webhooks/github")
     async def github_webhook(request: Request):
