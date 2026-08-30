@@ -78,8 +78,9 @@ def program_activity(
 ) -> dict:
     """Map one authoritative program snapshot to the generic activity envelope."""
     created = int(program["created_at"])
+    program_updated = int(program["updated_at"])
     updated = max(
-        int(program["updated_at"]),
+        program_updated,
         int(deployment["updated_at"]) if deployment is not None else 0,
     )
     successful_deployment = (
@@ -189,7 +190,7 @@ def program_activity(
                     f"feature-{feature_id}-published",
                     "work.published",
                     f"{feature['title']} published",
-                    _time(None, updated),
+                    _time(None, program_updated),
                     phase="waiting" if feature.get("dependencies") else "queued",
                     summary=(
                         "Dependencies: " + ", ".join(feature["dependencies"])
@@ -206,7 +207,7 @@ def program_activity(
                     f"feature-{feature_id}-verified",
                     "change.verified",
                     f"{feature_id} candidate verified",
-                    _time(None, updated),
+                    _time(None, program_updated),
                     phase="waiting" if not feature.get("merged_commit") else "running",
                     summary="Factory published a draft change for independent human review.",
                     links=links,
@@ -219,7 +220,7 @@ def program_activity(
                     f"feature-{feature_id}-merged",
                     "change.merged",
                     f"{feature_id} merged",
-                    _time(None, updated),
+                    _time(None, program_updated),
                     phase="succeeded",
                     links=[
                         *links,
@@ -240,7 +241,7 @@ def program_activity(
                 "program-accepted",
                 "work.accepted",
                 "Exact assembled commit accepted",
-                _time(None, updated),
+                _time(None, program_updated),
                 phase="succeeded",
                 summary="Authority-stripped acceptance verified the assembled product.",
                 links=[
@@ -274,7 +275,7 @@ def program_activity(
                 "program-failed",
                 "work.failed",
                 "Program failed",
-                _time(None, updated),
+                _time(None, program_updated),
                 phase="failed",
                 summary=str(program["error"])[:1000],
                 links=[_link("issue", "Root issue", issue_uri)],

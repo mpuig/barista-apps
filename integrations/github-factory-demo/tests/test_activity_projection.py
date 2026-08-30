@@ -136,6 +136,29 @@ def test_accepted_program_maps_to_generic_bounded_activity(tmp_path):
     assert "github_token" not in json.dumps(document)
 
 
+def test_deployment_time_does_not_retimestamp_historical_program_events(tmp_path):
+    deployed = {
+        "request_id": "ar-succeeded",
+        "program_id": "program-21",
+        "state": "succeeded",
+        "result": {
+            "deployment_id": "deployment-program-21",
+            "session_name": "product-program-21",
+            "endpoint": "https://app.example",
+            "image_digest": "sha256:" + "f" * 64,
+        },
+        "error": None,
+        "attempts": 1,
+        "created_at": 1_700_000_210,
+        "updated_at": 1_700_000_220,
+    }
+    document = program_activity(
+        _program(), None, _config(tmp_path), deployed, deployment_count=1
+    )
+    assert document["events"][-1]["id"] == "product-deployed"
+    assert document["events"][-2]["id"] == "program-accepted"
+
+
 def test_failed_deployment_exposes_a_fresh_human_retry_identity(tmp_path):
     config = _config(
         tmp_path, activity_deploy_command=("/usr/local/bin/deploy-product",)
