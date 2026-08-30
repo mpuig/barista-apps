@@ -74,12 +74,23 @@ def program_activity(
     config: ControllerConfig,
     deployment: dict | None = None,
     journal: list[dict] | None = None,
+    deployment_count: int = 0,
 ) -> dict:
     """Map one authoritative program snapshot to the generic activity envelope."""
     created = int(program["created_at"])
     updated = max(
         int(program["updated_at"]),
         int(deployment["updated_at"]) if deployment is not None else 0,
+    )
+    successful_deployment = (
+        deployment
+        if deployment is not None and deployment.get("state") == "succeeded"
+        else None
+    )
+    deployment_action_attempt = (
+        deployment_count + 1
+        if deployment is not None and deployment.get("state") == "failed"
+        else max(deployment_count, 1)
     )
     repository = str(program["repository"])
     issue_uri = str(program["issue_uri"])
@@ -238,14 +249,14 @@ def program_activity(
                 attributes={"commit": assembled},
             )
         )
-    if deployment is not None and deployment.get("result"):
-        deployed = deployment["result"]
+    if successful_deployment is not None and successful_deployment.get("result"):
+        deployed = successful_deployment["result"]
         events.append(
             _event(
                 "product-deployed",
                 "service.deployed",
                 "Accepted product deployed",
-                _time(int(deployment["updated_at"]), updated),
+                _time(int(successful_deployment["updated_at"]), updated),
                 phase="succeeded",
                 summary="The source-side runner independently verified the public endpoint.",
                 links=[
@@ -291,12 +302,12 @@ def program_activity(
                 _link("pull-request", f"{feature['id']} PR", feature.get("pr_uri")),
             ]
         )
-    if deployment is not None and deployment.get("result"):
+    if successful_deployment is not None and successful_deployment.get("result"):
         links.append(
             _link(
                 "endpoint",
                 "Generated application",
-                deployment["result"].get("endpoint"),
+                successful_deployment["result"].get("endpoint"),
             )
         )
 
@@ -350,8 +361,8 @@ def program_activity(
                     "digest": command_digest,
                 }
             )
-    if deployment is not None and deployment.get("result"):
-        deployed_digest = deployment["result"].get("image_digest")
+    if successful_deployment is not None and successful_deployment.get("result"):
+        deployed_digest = successful_deployment["result"].get("image_digest")
         if isinstance(deployed_digest, str):
             artifacts.append(
                 {
@@ -359,7 +370,7 @@ def program_activity(
                     "kind": "oci-image",
                     "label": "Deployed image",
                     "digest": deployed_digest,
-                    "url": deployment["result"].get("endpoint"),
+                    "url": successful_deployment["result"].get("endpoint"),
                 }
             )
 
@@ -403,11 +414,11 @@ def program_activity(
         "events": projected_events[:100],
         "actions": [
             {
-                "id": "deploy",
+                "id": f"deploy-{deployment_action_attempt}",
                 "label": "Deploy",
                 "description": (
                     "The accepted artifact is deployed and its endpoint was verified."
-                    if deployment is not None
+                    if successful_deployment is not None
                     else (
                         "Request verified deployment of the accepted artifact."
                         if config.activity_deploy_enabled
@@ -417,7 +428,7 @@ def program_activity(
                 "available": bool(
                     config.activity_deploy_enabled
                     and status == "accepted"
-                    and deployment is None
+                    and successful_deployment is None
                 ),
                 "confirmation": "Request deployment of the exact accepted commit?",
             }

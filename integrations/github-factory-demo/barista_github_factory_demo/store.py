@@ -1221,11 +1221,19 @@ class DeliveryStore:
             )
             self._connection.commit()
 
+    def deployment_count(self, program_id: str) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) AS total FROM deployment_requests WHERE program_id = ?",
+                (program_id,),
+            ).fetchone()
+        return int(row["total"]) if row is not None else 0
+
     def latest_deployment(self, program_id: str) -> dict | None:
         with self._lock:
             row = self._connection.execute(
                 """SELECT * FROM deployment_requests
-                WHERE program_id = ? AND state = 'succeeded'
+                WHERE program_id = ?
                 ORDER BY updated_at DESC LIMIT 1""",
                 (program_id,),
             ).fetchone()

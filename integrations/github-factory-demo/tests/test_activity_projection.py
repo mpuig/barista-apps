@@ -126,7 +126,7 @@ def test_accepted_program_maps_to_generic_bounded_activity(tmp_path):
     }
     assert document["actions"] == [
         {
-            "id": "deploy",
+            "id": "deploy-1",
             "label": "Deploy",
             "description": "A trusted deployment runner has not been configured for this source.",
             "available": False,
@@ -134,6 +134,28 @@ def test_accepted_program_maps_to_generic_bounded_activity(tmp_path):
         }
     ]
     assert "github_token" not in json.dumps(document)
+
+
+def test_failed_deployment_exposes_a_fresh_human_retry_identity(tmp_path):
+    config = _config(
+        tmp_path, activity_deploy_command=("/usr/local/bin/deploy-product",)
+    )
+    failed = {
+        "request_id": "ar-failed",
+        "program_id": "program-21",
+        "state": "failed",
+        "result": None,
+        "error": "endpoint verification failed",
+        "attempts": 1,
+        "created_at": 1_700_000_210,
+        "updated_at": 1_700_000_220,
+    }
+    document = program_activity(
+        _program(), None, config, failed, deployment_count=1
+    )
+    assert document["actions"][0]["id"] == "deploy-2"
+    assert document["actions"][0]["available"] is True
+    assert not any(event["id"] == "product-deployed" for event in document["events"])
 
 
 def test_projection_revision_only_advances_for_changed_source_content(tmp_path):
@@ -319,7 +341,7 @@ def test_human_action_is_source_executed_and_durably_resolved():
             "request_id": "ar-123",
             "stream_id": "program-21",
             "source_id": "software-factory",
-            "action_id": "deploy",
+            "action_id": "deploy-1",
         }
     )
 
@@ -347,7 +369,7 @@ def test_activity_request_cannot_deploy_unaccepted_program():
             "request_id": "ar-123",
             "stream_id": "program-21",
             "source_id": "software-factory",
-            "action_id": "deploy",
+            "action_id": "deploy-1",
         }
     )
 

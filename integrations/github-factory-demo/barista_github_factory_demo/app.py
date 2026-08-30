@@ -438,10 +438,18 @@ class DemoController:
             str(program["repository"]), int(program["issue_number"])
         )
         deployment = self.store.latest_deployment(program_id)
+        deployment_count = self.store.deployment_count(program_id)
         journal = self.store.program_events(program_id)
         self.store.desire_activity(
             program_id,
-            program_activity(program, delivery, self.config, deployment, journal),
+            program_activity(
+                program,
+                delivery,
+                self.config,
+                deployment,
+                journal,
+                deployment_count,
+            ),
         )
         target = self.store.activity_target(program_id)
         if target is not None:
@@ -508,7 +516,12 @@ class DemoController:
         assert isinstance(request_id, str)
         assert isinstance(program_id, str)
         assert isinstance(source_id, str)
-        if source_id != "software-factory" or request.get("action_id") != "deploy":
+        action_id = request.get("action_id")
+        if (
+            source_id != "software-factory"
+            or not isinstance(action_id, str)
+            or not action_id.startswith("deploy-")
+        ):
             self.activity_publisher.resolve_action(
                 request_id,
                 source_id,
@@ -549,6 +562,7 @@ class DemoController:
         except Exception as exc:  # noqa: BLE001 - durable action boundary
             message = self._safe_failure(exc)
             self.store.fail_deployment(request_id, message)
+            self._queue_activity_program(program_id)
             self.activity_publisher.resolve_action(
                 request_id, source_id, "failed", message=message
             )
