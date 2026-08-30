@@ -1,8 +1,8 @@
-# GitHub issue → Factory → verified draft pull request
+# GitHub Factory controller
 
-For the complete clarification → BRD approval → dependency-gated features →
-assembled-product acceptance presentation, use
-[`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md).
+For the complete clarification → business requirements document (BRD) approval
+→ dependency-gated features → assembled-product acceptance → explicit deployment
+presentation, use [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md).
 
 This integration is a persistent signed-webhook controller. Every accepted
 `issues/opened` event launches one ephemeral Factory App Run. Factory resolves
@@ -14,8 +14,12 @@ a compact result, and deletes the owning session.
 
 The persistent trigger is not an App Run. Factory and each child worker are.
 There is no second provider scheduler. Root issues containing the fixed
-`[barista:product-program]` marker use the product-program state machine;
-ordinary issues retain the issue-only workflow.
+`[barista:product-program]` marker use the durable product-program state machine.
+It creates fresh correlated attempts for clarification, a verified BRD draft,
+planning, feature work, and final acceptance. Accepted products are not published
+automatically: Cloud records human action intent, while this source controller
+revalidates accepted state and owns deployment, verification, and settlement.
+Ordinary issues retain the issue-only workflow.
 
 ## Authority boundaries
 

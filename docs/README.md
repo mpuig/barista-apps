@@ -15,9 +15,10 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
   observation, verified results, detach, and cleanup.
 - [Source and forge adapters](source-and-forge-adapters.md) — immutable Git
   acquisition, bounded objectives, patches, branches, and explicit draft delivery.
-- [GitHub Factory demo](../integrations/github-factory-demo/README.md) — signed
-  issue webhooks, one ephemeral Factory run, independently verified draft PRs,
-  durable deduplication, and teardown.
+- [GitHub Factory controller](../integrations/github-factory-demo/README.md) —
+  signed issue webhooks, bounded clarification, approved briefs,
+  dependency-gated feature runs, independent acceptance, generic activity, and
+  explicit source-owned deployment.
 - [Threat model](threat-model.md) — untrusted apps, delegated grants,
   exact-memory secrets, malicious capsules, stories, adapters, local
   remote-binding, and supply chain.
@@ -26,12 +27,12 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
 
 | Path | What |
 |---|---|
-| `contracts/` | App Manifest, Host API (OpenAPI + streaming), Session Story schemas + golden tests |
+| `contracts/` | App Manifest, App Run, Host API (OpenAPI + streaming), and Session Story schemas + golden tests |
 | `conformance/` | Black-box provider conformance suite (+ standalone guard) |
 | `providers/local/` | Single-user reference Host API provider over `barista.sh` |
 | `sdks/python/` | Provider-neutral SDK + adapter interface |
 | `apps/{pi,claude,codex}/` | Harness adapters |
-| `apps/{change-agent,factory,github-issue-worker,lift,story}/` | Portable and internal apps |
-| `integrations/github-factory-demo/` | Signed GitHub webhook controller and bootstrap tooling |
+| `apps/{change-agent,factory,github-issue-triage,github-issue-worker,github-product-worker,lift,story}/` | Portable and internal apps |
+| `integrations/github-factory-demo/` | Signed GitHub controller, durable product programs, generic activity projection, and trusted deployment adapters |
 | `acceptance/` | Full offline acceptance flow (Cloud blocked) |
 | `scripts/supply_chain_check.py` | Digest/reference/lock/schema-drift checks |

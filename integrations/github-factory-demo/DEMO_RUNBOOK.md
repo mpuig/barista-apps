@@ -10,8 +10,10 @@ and the public non-authoritative Project board.
 - Repository issues: <https://github.com/mpuig/barista-factory-demo/issues>
 - Pull requests: <https://github.com/mpuig/barista-factory-demo/pulls>
 - Controller health: <https://github-factory.beta.barista.sh/healthz>
+- Tenant activity: <https://beta.barista.sh/app/activity>
 
-The Project is presentation only. SQLite controller state is authoritative.
+The Project and Cloud activity stream are projections. SQLite controller state
+is authoritative.
 Manually moving a card never approves or releases work.
 
 ## 1. Start with an incomplete brief
@@ -115,12 +117,41 @@ It verifies:
 The terminal program status becomes `accepted`. Failed workers, integrity
 failures, and acceptance failures remain durable for bounded forensics.
 
+## 7. Review activity and request deployment
+
+Open `/app/activity/program-N` in the authenticated Cloud console. Confirm the
+generic stream shows the original source timestamps, exact accepted commit,
+BRD/plan/acceptance digests, issue and pull-request links, and an available
+`deploy-N` action. Cloud renders these facts without interpreting Factory,
+GitHub, BRD, feature, or deployment semantics.
+
+Select **Deploy** and confirm the action. This records durable human intent; it
+does not run a Cloud command. The Factory controller polls only its own source
+requests, re-reads the authoritative program, requires `accepted`, claims the
+request once, and invokes its fixed deployment adapter. The adapter builds the
+accepted commit, publishes one digest-pinned image, launches it with its declared
+writable binding, and verifies its credential-free HTTPS health endpoint before
+the controller settles the request.
+
+Refresh the stream and verify:
+
+- the request progressed `requested → running → succeeded` only through the
+  source controller;
+- the deployment event is last without changing earlier event timestamps;
+- the result names the deployment, session, endpoint, and `sha256` image digest;
+- the action is no longer available; and
+- a failed terminal request, if demonstrated, remains immutable while retry uses
+  a newly versioned action identity such as `deploy-2`.
+
 ## Presenter notes
 
 - Emphasize that issues, comments, BRDs, plans, and Project fields are data—not
   command or credential authority.
 - Factory may publish verified draft work but cannot approve or merge its own PR.
-- The controller holds GitHub delivery authority; tokens never enter App Runs.
+- The controller holds GitHub delivery and activity-source authority; tokens
+  never enter App Runs.
+- Cloud stores generic activity and human intent but cannot authorize or execute
+  a deployment.
 - Feature issues are visible together, while execution remains serial because of
   the approved dependency graph.
 - Use a new root issue for each presentation. Stable identities make webhook and

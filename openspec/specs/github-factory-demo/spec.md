@@ -1,7 +1,7 @@
 # github-factory-demo Specification
 
 ## Purpose
-TBD - created by archiving change apps-008-github-factory-demo. Update Purpose after archive.
+Define the signed GitHub ingress controller that launches bounded Factory App Runs, independently verifies results, publishes idempotent draft work, and preserves durable delivery evidence.
 ## Requirements
 ### Requirement: The GitHub Factory controller SHALL authenticate and bound webhook triggers
 

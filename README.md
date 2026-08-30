@@ -4,7 +4,7 @@
 
 Barista Apps defines the vendor-neutral contract that lets an agent app run
 unchanged against a local, single-user host or a managed service — including
-[Barista Cloud](https://barista.sh) — without depending on either
+[Barista Cloud](https://beta.barista.sh) — without depending on either
 implementation's private API.
 
 ## Status
@@ -42,10 +42,10 @@ advertised profile. See [`conformance/README.md`](conformance/README.md).
 - **SDK** — provider selection, capability negotiation, idempotency, streaming,
   typed App Run lifecycle/result collection, and source/forge adapters on top of
   the Host API.
-- **Reference apps** — Pi, Claude Code, and Codex adapters; Change Agent
-  (single-agent repository patch job); Factory (coordinator/worker fan-out);
-  Lift (exact and semantic session transfer); Session Story (redacted,
-  non-executable knowledge export).
+- **Reference apps and integrations** — Pi, Claude Code, and Codex adapters;
+  Change Agent; Factory coordination and product-program workers; the signed
+  GitHub controller with generic activity projection and source-owned deployment;
+  Lift session transfer; and redacted, non-executable Session Story export.
 
 ## What this is not
 
@@ -60,8 +60,9 @@ advertised profile. See [`conformance/README.md`](conformance/README.md).
 
 ```text
 contracts/
-  host-api/          # OpenAPI + streaming schemas
+  host-api/           # OpenAPI + streaming schemas
   app-manifest/       # JSON Schema
+  app-run/            # provider-neutral operation/result envelopes
   session-story/      # JSON Schema / media types
 sdks/
   python/
@@ -76,6 +77,8 @@ apps/
   factory/
   lift/
   story/
+integrations/
+  github-factory-demo/ # signed trigger, durable programs, activity/deployment
 ```
 
 Each package is independently versioned; this is a monorepo of packages, not
@@ -87,7 +90,7 @@ one privileged daemon.
 |---|---|
 | [`barista.sh`](https://github.com/mpuig/barista.sh) | Open-source execution kernel: Node Agent, runtime trait, snapshots. Supplies the fork/capsule/grant primitives this repository consumes — but never sees apps, tenants, or billing. |
 | `barista-apps` (here) | The open contract and userland: App Manifest, Host API, conformance, local provider, SDK, reference apps. |
-| Barista Cloud | A proprietary, tenant-aware implementation of the Host API defined here, plus collaboration features (capsule registry, sharing, branch promotion) built on top. |
+| Barista Cloud | A proprietary, tenant-aware Host API provider plus Cloud-owned authentication, tenancy, sessions, billing, and generic activity storage/UI. Product workflow semantics remain in this repository. |
 
 ## Contributing
 
