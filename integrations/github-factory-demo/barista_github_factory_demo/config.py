@@ -62,6 +62,12 @@ class ControllerConfig:
     github_project_status_options: tuple[tuple[str, str], ...] = (
         DEFAULT_PROJECT_STATUS_OPTIONS
     )
+    activity_endpoint: str | None = None
+    activity_token: str | None = None
+    activity_source_url: str | None = None
+    host_api_token: str | None = None
+    activity_deploy_command: tuple[str, ...] = ()
+    activity_deploy_timeout_seconds: int = 1800
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.repository)
@@ -106,6 +112,47 @@ class ControllerConfig:
             raise ValueError(
                 "forge and project authority must use separate credentials"
             )
+        activity_values = (self.activity_endpoint, self.activity_token)
+        if any(value is not None for value in activity_values) and not all(
+            value is not None for value in activity_values
+        ):
+            raise ValueError(
+                "activity endpoint and token must be configured together"
+            )
+        for name, url in (
+            ("activity endpoint", self.activity_endpoint),
+            ("activity source URL", self.activity_source_url),
+        ):
+            if url is None:
+                continue
+            parsed_url = urlparse(url)
+            canonical_url = f"https://{parsed_url.netloc}{parsed_url.path.rstrip('/')}"
+            if (
+                parsed_url.scheme != "https"
+                or not parsed_url.hostname
+                or parsed_url.username
+                or parsed_url.password
+                or parsed_url.query
+                or parsed_url.fragment
+                or url != canonical_url
+            ):
+                raise ValueError(f"{name} must be canonical credential-free HTTPS")
+        if self.activity_token is not None and self.activity_token in {
+            self.github_token,
+            self.github_project_token,
+            self.host_api_token,
+        }:
+            raise ValueError(
+                "activity, forge, project, and Host API authorities must use separate credentials"
+            )
+        if self.activity_deploy_command and not Path(
+            self.activity_deploy_command[0]
+        ).is_absolute():
+            raise ValueError("activity deploy command must use an absolute executable path")
+        if any(not item or len(item) > 8192 for item in self.activity_deploy_command):
+            raise ValueError("activity deploy command is invalid")
+        if not (30 <= self.activity_deploy_timeout_seconds <= 3600):
+            raise ValueError("activity deploy timeout is outside the supported bound")
         if self.github_project_number is not None and not (
             1 <= self.github_project_number <= 10000
         ):
@@ -142,6 +189,14 @@ class ControllerConfig:
     @property
     def project_enabled(self) -> bool:
         return self.github_project_number is not None
+
+    @property
+    def activity_enabled(self) -> bool:
+        return self.activity_endpoint is not None
+
+    @property
+    def activity_deploy_enabled(self) -> bool:
+        return bool(self.activity_deploy_command)
 
     @property
     def project_owner(self) -> str:
@@ -222,6 +277,16 @@ class ControllerConfig:
                 "BARISTA_GITHUB_PROJECT_STATUS_FIELD", "Status"
             ),
             github_project_status_options=project_options,
+            activity_endpoint=os.environ.get("BARISTA_ACTIVITY_ENDPOINT") or None,
+            activity_token=os.environ.get("BARISTA_ACTIVITY_TOKEN") or None,
+            activity_source_url=os.environ.get("BARISTA_ACTIVITY_SOURCE_URL") or None,
+            host_api_token=os.environ.get("BARISTA_HOST_API_TOKEN") or None,
+            activity_deploy_command=tuple(
+                _optional_command_from_env("BARISTA_ACTIVITY_DEPLOY_COMMAND")
+            ),
+            activity_deploy_timeout_seconds=int(
+                os.environ.get("BARISTA_ACTIVITY_DEPLOY_TIMEOUT_SECONDS", "1800")
+            ),
         )
 
     def public_document(self) -> dict:
@@ -241,6 +306,12 @@ class ControllerConfig:
             "concurrency": self.concurrency,
             "authorized_responders": sorted(self.responders),
             "controller_login": self.controller_login,
+            "activity": {
+                "enabled": self.activity_enabled,
+                "endpoint": self.activity_endpoint,
+                "source_url": self.activity_source_url,
+                "deploy_enabled": self.activity_deploy_enabled,
+            },
             "project": {
                 "enabled": self.project_enabled,
                 "owner": self.project_owner if self.project_enabled else None,
@@ -285,10 +356,21 @@ def feature_worker_command_from_env() -> list[str]:
     )
 
 
+def _optional_command_from_env(name: str) -> list[str]:
+    raw = os.environ.get(name)
+    if not raw:
+        return []
+    return _parse_command(name, raw)
+
+
 def _command_from_env(name: str, default: list[str]) -> list[str]:
     raw = os.environ.get(name)
     if not raw:
         return list(default)
+    return _parse_command(name, raw)
+
+
+def _parse_command(name: str, raw: str) -> list[str]:
     value = json.loads(raw)
     if (
         not isinstance(value, list)

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import secrets
@@ -42,6 +43,10 @@ def provision(
     project_number: int | None,
     project_owner: str | None,
     project_owner_kind: str,
+    activity_token_file: Path | None,
+    activity_endpoint: str,
+    activity_source_url: str,
+    activity_deploy_command: str | None,
     cp_host: str,
     ssh_key: Path,
     known_hosts: Path,
@@ -62,6 +67,35 @@ def provision(
     )
     if project_token is not None and project_token == github_token:
         raise SystemExit("forge and project authority must use separate credentials")
+    activity_token = (
+        _read_secret(activity_token_file, "activity source token")
+        if activity_token_file is not None
+        else None
+    )
+    if activity_token is not None and activity_token in {
+        github_token,
+        project_token,
+        host_token,
+    }:
+        raise SystemExit(
+            "activity, forge, project, and Host API authority must use separate credentials"
+        )
+    deploy_argv = None
+    if activity_deploy_command is not None:
+        if activity_token is None:
+            raise SystemExit("activity deployment requires an activity source token")
+        try:
+            deploy_argv = json.loads(activity_deploy_command)
+        except json.JSONDecodeError as exc:
+            raise SystemExit("activity deploy command must be JSON argv") from exc
+        if (
+            not isinstance(deploy_argv, list)
+            or not deploy_argv
+            or len(deploy_argv) > 128
+            or any(not isinstance(item, str) or not item or len(item) > 8192 for item in deploy_argv)
+            or not Path(deploy_argv[0]).is_absolute()
+        ):
+            raise SystemExit("activity deploy command must be bounded absolute JSON argv")
     if project_number is not None and not 1 <= project_number <= 10000:
         raise SystemExit("project number is outside the supported bound")
     if project_owner_kind not in {"user", "organization"}:
@@ -91,6 +125,21 @@ def provision(
         _environment_line("BARISTA_HOST_API_ENDPOINT", "https://beta.barista.sh"),
         _environment_line("BARISTA_HOST_API_TOKEN", host_token),
     ]
+    if activity_token is not None:
+        environment_lines.extend(
+            [
+                _environment_line("BARISTA_ACTIVITY_ENDPOINT", activity_endpoint),
+                _environment_line("BARISTA_ACTIVITY_TOKEN", activity_token),
+                _environment_line("BARISTA_ACTIVITY_SOURCE_URL", activity_source_url),
+            ]
+        )
+        if deploy_argv is not None:
+            environment_lines.append(
+                _environment_line(
+                    "BARISTA_ACTIVITY_DEPLOY_COMMAND",
+                    json.dumps(deploy_argv, separators=(",", ":")),
+                )
+            )
     if project_token is not None and project_number is not None:
         environment_lines.extend(
             [
@@ -175,6 +224,12 @@ def main() -> int:
     parser.add_argument("--project-token-file", type=Path)
     parser.add_argument("--project-number", type=int)
     parser.add_argument("--project-owner")
+    parser.add_argument("--activity-token-file", type=Path)
+    parser.add_argument("--activity-endpoint", default="https://beta.barista.sh")
+    parser.add_argument(
+        "--activity-source-url", default="https://github-factory.beta.barista.sh"
+    )
+    parser.add_argument("--activity-deploy-command")
     parser.add_argument(
         "--project-owner-kind", choices=("user", "organization"), default="user"
     )

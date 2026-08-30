@@ -28,7 +28,10 @@ ordinary issues retain the issue-only workflow.
 - `BARISTA_HOST_API_TOKEN` is runtime Factory authority.
 - `BARISTA_GITHUB_PROJECT_TOKEN` is optional Projects v2 projection authority.
   Keep it separate from runtime forge authority and scope it to project access.
-- GitHub, Projects, and Host API tokens stay in the trusted controller. They are not put in
+- `BARISTA_ACTIVITY_TOKEN` is an optional narrow tenant/source credential. It can
+  publish generic activity and settle that source's action requests; it is not a
+  Host API, forge, Project, or application-runtime credential.
+- GitHub, Projects, Host API, and activity tokens stay in the trusted controller. They are not put in
   App Run envelopes, Factory/worker environments, objective files, argv, clone
   URLs, result documents, or webhook responses.
 - The issue title and body are untrusted objective data. They cannot change the
@@ -168,6 +171,41 @@ uv run python provision-beta.py \
   --project-token-file /secure/path/github-project-token \
   --project-number N --project-owner mpuig
 ```
+
+### Optional authenticated activity history and deployment requests
+
+A Cloud tenant may register a generic source and receive its narrow token once:
+
+```sh
+curl -fsS -X POST https://CLOUD/v1/activity/sources \
+  -H "Authorization: Bearer $TENANT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"source_id":"software-factory","label":"Software Factory"}'
+```
+
+Store the returned token in its own mode-0600 file. Configure the controller
+with `BARISTA_ACTIVITY_ENDPOINT=https://CLOUD`, `BARISTA_ACTIVITY_TOKEN`, and an
+optional credential-free `BARISTA_ACTIVITY_SOURCE_URL`. Programs then appear in
+the authenticated tenant's generic Activity console. Delivery is corrective,
+serialized, startup-recoverable, and non-blocking; Cloud never learns Factory
+workflow semantics.
+
+Accepted programs always describe a Deploy action. It remains unavailable until
+`BARISTA_ACTIVITY_DEPLOY_COMMAND` contains a bounded JSON argv whose executable
+is an absolute path. The fixed operator-installed adapter receives this bounded
+canonical document on stdin:
+
+```json
+{"schema_version":"v1alpha1","operation_id":"ar-…","program_id":"program-…","repository":"https://github.com/…/…","accepted_commit":"…","acceptance":{}}
+```
+
+It must independently deploy and verify the exact artifact, then emit exactly
+`schema_version`, `operation_id`, `deployment_id`, `endpoint`, `image_digest`,
+and `session_name`. The image must be `sha256` digest-pinned and the endpoint
+must be credential-free HTTPS. The adapter receives a minimal environment; give
+it deployment authority through separately protected files named only in the
+trusted argv. Request IDs are stable operation IDs, and the controller durably
+replays an interrupted result handoff without changing workflow state.
 
 ## Bootstrap
 
