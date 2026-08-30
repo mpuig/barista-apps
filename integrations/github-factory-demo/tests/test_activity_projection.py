@@ -99,6 +99,11 @@ def test_accepted_program_maps_to_generic_bounded_activity(tmp_path):
     assert document["kind"] == "product-program"
     assert document["phase"] == "succeeded"
     assert document["title"] == "widgets · Program #21"
+    event_ids = [event["id"] for event in document["events"]]
+    assert event_ids.index("brd-published") < event_ids.index("brd-approved")
+    assert event_ids.index("feature-status-api-published") < event_ids.index(
+        "feature-status-api-verified"
+    ) < event_ids.index("feature-status-api-merged")
     assert {event["id"] for event in document["events"]} >= {
         "program-created",
         "clarification-requested",

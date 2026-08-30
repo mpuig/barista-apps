@@ -377,7 +377,7 @@ def program_activity(
             )
         ),
     ]
-    projected_events.sort(key=lambda item: (item["occurred_at"], item["id"]))
+    projected_events.sort(key=lambda item: item["occurred_at"])
 
     return {
         "schema_version": "v1alpha1",
