@@ -1,7 +1,7 @@
 # app-runs Specification
 
 ## Purpose
-TBD - created by archiving change apps-007-portable-app-runs. Update Purpose after archive.
+Define the canonical provider-neutral operation envelope, lifecycle, result rendezvous, source identity, bindings, secret references, deliveries, and cleanup behavior for App Runs.
 ## Requirements
 ### Requirement: An App Run SHALL have a canonical provider-neutral envelope
 

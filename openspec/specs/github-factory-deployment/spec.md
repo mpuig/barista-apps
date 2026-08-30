@@ -1,7 +1,7 @@
 # github-factory-deployment Specification
 
 ## Purpose
-TBD - created by archiving change apps-009-beta-github-factory-deploy. Update Purpose after archive.
+Define exact-revision, additive deployment of the signed GitHub Factory controller and digest-pinned worker images to beta without transporting runtime credentials or deleting operator state.
 ## Requirements
 ### Requirement: Beta GitHub Factory deployment SHALL preserve exact source and workload identity
 
