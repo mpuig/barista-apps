@@ -8,7 +8,6 @@ constants. Request data arrives as bounded JSON on stdin.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -81,7 +80,7 @@ def _refuse_lfs(workspace: Path) -> None:
 
 def main() -> int:
     request = _request()
-    suffix = hashlib.sha256(request["operation_id"].encode()).hexdigest()[:12]
+    suffix = request["accepted_commit"][:12]
     image = f"{REGISTRY}/product-{request['program_id']}:{suffix}"
     with tempfile.TemporaryDirectory(prefix="barista-product-") as temporary:
         workspace = Path(temporary) / "source"
