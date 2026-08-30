@@ -13,6 +13,6 @@
 ## 3. Verification
 
 - [x] 3.1 Test deterministic mapping, bounds, retry convergence, stale state, projection failure isolation, and source-side action execution.
-- [ ] 3.2 Mutation-test that activity fields cannot advance programs and projection failure cannot fail accepted work.
+- [x] 3.2 Mutation-test that activity fields cannot advance programs and projection failure cannot fail accepted work.
 - [x] 3.3 Run controller, Factory, contract, standalone, supply-chain, and strict OpenSpec checks.
-- [ ] 3.4 Record managed per-user projection evidence through the generic activity API.
+- [x] 3.4 Record managed per-user projection, explicit deployment request, source settlement, generated endpoint, and responsive UI evidence through the generic activity API.
