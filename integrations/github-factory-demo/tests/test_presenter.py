@@ -114,6 +114,8 @@ def test_presenter_is_public_secret_free_and_strictly_protected(tmp_path: Path) 
         nonce = re.search(r'<style nonce="([^"]+)">', page.text).group(1)
         assert f"script-src 'nonce-{nonce}'; connect-src 'self'" in page.text
         assert "unsafe-inline" not in page.text
+        assert "if(typeof value!=='string'||!value)return null" in page.text
+        assert "return state.current_program||null" in page.text
         assert page.headers["cache-control"] == "no-store"
 
         state = client.get("/presenter/api/state")
@@ -215,4 +217,6 @@ def test_reset_refuses_active_work_then_settles_terminal_scenario(
         assert replay.status_code == 200
         assert reset.json()["scenario"]["reset_at"] is not None
         assert forge.closed == [50]
-        assert client.get("/presenter/api/state").json()["current_scenario"] is None
+        final_state = client.get("/presenter/api/state").json()
+        assert final_state["current_scenario"] is None
+        assert final_state["programs"][0]["scenario"]["reset_at"] is not None
