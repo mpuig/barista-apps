@@ -52,9 +52,9 @@ presentation.
 
 ```sh
 export BARISTA_MANAGED_SMOKE_AGENT_CHECKS='[
-  {"name":"claude","app":"claude","command":["/bin/sh","-c","test -n \"$ANTHROPIC_API_KEY\" && claude --version"],"expected":"2.1.251"},
-  {"name":"pi","app":"pi","command":["/bin/sh","-c","test -n \"$ANTHROPIC_API_KEY\" && pi --version"],"expected":"0.73.1"},
-  {"name":"codex","app":"codex","command":["/bin/sh","-c","test -n \"$OPENAI_API_KEY\" && test \"$OPENAI_BASE_URL\" = \"https://eu.api.openai.com/v1\" && codex --version"],"expected":"0.151.0"}
+  {"name":"claude","app":"claude","command":["/bin/sh","-c","test -n \"$ANTHROPIC_API_KEY\" && claude --version 2>&1"],"expected":"2.1.251"},
+  {"name":"pi","app":"pi","command":["/bin/sh","-c","test -n \"$ANTHROPIC_API_KEY\" && pi --version 2>&1"],"expected":"0.73.1"},
+  {"name":"codex","app":"codex","command":["/bin/sh","-c","test -n \"$OPENAI_API_KEY\" && test \"$OPENAI_BASE_URL\" = \"https://eu.api.openai.com/v1\" && codex --version 2>&1"],"expected":"0.151.0"}
 ]'
 uv run barista-managed-smoke \
   --profile preflight \
