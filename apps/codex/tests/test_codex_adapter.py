@@ -74,5 +74,10 @@ def test_manifest_is_valid(tmp_path):
     manifest = json.loads((REPO / "apps" / "codex" / "manifest.json").read_text())
     schema = json.loads((REPO / "contracts" / "app-manifest" / "v1alpha1" / "schema.json").read_text())
     Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(manifest)
-    for secret in manifest["permissions"]["secrets"]:
-        assert secret["ref"].startswith("secret://")
+    references = {
+        binding["name"]: binding["ref"] for binding in manifest["permissions"]["secrets"]
+    }
+    assert references == {
+        "OPENAI_API_KEY": "secret://openai/api-key",
+        "OPENAI_BASE_URL": "ref://openai/base-url",
+    }
