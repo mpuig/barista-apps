@@ -116,6 +116,8 @@ def test_presenter_is_public_secret_free_and_strictly_protected(tmp_path: Path) 
         assert "unsafe-inline" not in page.text
         assert "if(typeof value!=='string'||!value)return null" in page.text
         assert "return state.current_program||null" in page.text
+        assert "badge.dataset.state=f.status;li.append(badge)" in page.text
+        assert ")).dataset.state" not in page.text
         assert page.headers["cache-control"] == "no-store"
 
         state = client.get("/presenter/api/state")
