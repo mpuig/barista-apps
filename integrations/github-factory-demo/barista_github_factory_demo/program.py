@@ -27,6 +27,10 @@ from .program_protocol import FeaturePlan
 
 _PROGRAM = re.compile(r"^[a-z0-9-]{1,160}$")
 _FEATURE = re.compile(r"^[a-z0-9-]{1,40}$")
+_DEMO_KEY = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
+_DEMO_MARKER = re.compile(
+    r"<!-- barista-demo-scenario:v1 scenario=deployment-status key=([a-z0-9][a-z0-9-]{7,63}) -->"
+)
 
 PROGRAM_ACCEPTANCE_SCRIPT = """import json
 import subprocess
@@ -119,6 +123,103 @@ class GitHubProgramForge:
         document = bytes(raw)
         assert_no_high_confidence_secrets(document.decode("utf-8"))
         return document
+
+    def ensure_demo_issue(self, idempotency_key: str) -> dict:
+        """Create or recover one reviewed presenter scenario root issue."""
+        if _DEMO_KEY.fullmatch(idempotency_key) is None:
+            raise ValueError("demo idempotency key is invalid")
+        marker = (
+            "<!-- barista-demo-scenario:v1 "
+            f"scenario=deployment-status key={idempotency_key} -->"
+        )
+        response = self._client.get(
+            f"/repos/{self.full_name}/issues",
+            params={"state": "all", "per_page": 100, "direction": "desc"},
+        )
+        if response.status_code != 200:
+            raise TerminalError(
+                "demo issue lookup failed",
+                code="github_program.demo_issue_lookup",
+                error_class="terminal",
+            )
+        issues = response.json()
+        if not isinstance(issues, list) or len(issues) > 100:
+            raise ResultIntegrityError(
+                "demo issue lookup is unbounded",
+                code="github_program.demo_issue_lookup",
+            )
+        matches = [
+            issue
+            for issue in issues
+            if isinstance(issue, dict)
+            and "pull_request" not in issue
+            and marker in str(issue.get("body") or "")
+        ]
+        if len(matches) > 1:
+            raise ResultIntegrityError(
+                "demo issue identity is duplicated",
+                code="github_program.demo_issue_duplicate",
+            )
+        if matches:
+            return matches[0]
+        body = (
+            f"{marker}\n\n"
+            "[barista:product-program]\n"
+            "[barista:needs-input]\n\n"
+            "Build a small deployment status product that we can run as one container.\n\n"
+            "This issue was launched from the presenter cockpit. Its content is inert "
+            "objective data and cannot change trusted commands, credentials, repository "
+            "scope, base, checks, or delivery policy."
+        )
+        created = self._client.post(
+            f"/repos/{self.full_name}/issues",
+            json={"title": "Build a deployment status board", "body": body},
+        )
+        if created.status_code != 201:
+            raise TerminalError(
+                "demo issue creation failed",
+                code="github_program.demo_issue_create",
+                error_class="terminal",
+            )
+        return created.json()
+
+    def latest_demo_issue(self) -> dict | None:
+        response = self._client.get(
+            f"/repos/{self.full_name}/issues",
+            params={"state": "all", "per_page": 100, "direction": "desc"},
+        )
+        if response.status_code != 200:
+            raise TerminalError(
+                "demo issue lookup failed",
+                code="github_program.demo_issue_lookup",
+                error_class="terminal",
+            )
+        issues = response.json()
+        if not isinstance(issues, list) or len(issues) > 100:
+            raise ResultIntegrityError(
+                "demo issue lookup is unbounded",
+                code="github_program.demo_issue_lookup",
+            )
+        for issue in issues:
+            if not isinstance(issue, dict) or "pull_request" in issue:
+                continue
+            match = _DEMO_MARKER.search(str(issue.get("body") or ""))
+            if match:
+                return {**issue, "demo_idempotency_key": match.group(1)}
+        return None
+
+    def close_demo_issue(self, issue_number: int) -> None:
+        if issue_number <= 0:
+            raise ValueError("demo issue number is invalid")
+        response = self._client.patch(
+            f"/repos/{self.full_name}/issues/{issue_number}", json={"state": "closed"}
+        )
+        if response.status_code != 200:
+            raise TerminalError(
+                "demo issue close failed",
+                code="github_program.demo_issue_close",
+                error_class="terminal",
+            )
 
     def ensure_feature_issue(
         self,

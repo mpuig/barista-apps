@@ -1,42 +1,78 @@
 # Presenter runbook: approved product program
 
-This is the human-controlled end-to-end demo. It uses the disposable public
-repository, persistent signed controller, ephemeral Factory/worker App Runs,
-and the public non-authoritative Project board.
+This is the human-controlled demo for the disposable public repository,
+persistent signed controller, ephemeral Factory/worker App Runs, and public
+non-authoritative Project board. Use the short route when reliability and
+explanation matter most; use the live route when the audience needs to see each
+human boundary happen.
 
-## Open these tabs
+## Before the audience arrives
+
+1. From `barista-apps`, run the no-spend command in
+   [`docs/managed-acceptance.md`](../../docs/managed-acceptance.md) with
+   `--profile preflight` and the three public URLs. Require a green report.
+2. Confirm the managed tenant inventory is empty after preflight.
+3. Open <https://github-factory.beta.barista.sh/presenter>. It should say
+   **Live**, show controller state, and reveal no credential.
+4. Open the Project, repository pull requests, and authenticated Cloud Activity
+   in adjacent tabs. Sign in manually; never automate passwords, passkeys, 2FA,
+   PATs, or OAuth codes.
+5. To use **Launch scenario** or **Reset**, select **Unlock controls** and enter
+   the separate mode-`0600` presenter token manually. It remains in that browser
+   tab's session storage and is not part of the cockpit state.
+
+If preflight is not green, do not start a live run. Use the retained-evidence
+route below instead.
+
+## 3–5 minute route: explain retained evidence
+
+Use this route for a dependable product tour with no model spend during the
+presentation.
+
+1. **Open the cockpit.** Select `program-21` under **Recent programs**. Point out
+   the six-stage rail: Brief, BRD approval, Plan, Features, Acceptance, Deploy.
+2. **Show the dependency workbench.** Explain that all three planned features
+   are visible, but each successor was released only after its dependency's
+   exact correlated merge.
+3. **Show exact evidence.** Call out the BRD, plan, accepted commit, deployment
+   state, and immutable image identity. These come from controller SQLite, not
+   the Project board.
+4. **Open Cloud Activity.** Show the same work as generic events and artifacts.
+   Cloud does not interpret BRDs, features, GitHub, or Factory policy.
+5. **Open the deployed product.** Visit
+   <https://factory-program-21.at.beta.barista.sh/>. If it is paused, the browser
+   shows wake progress rather than a raw 409 and then serves the application.
+6. **Close on authority.** Factory can prepare work but cannot approve its own
+   pull requests; Cloud records deployment intent but cannot execute source
+   deployment; disposable sessions are gone.
+
+## 10–15 minute route: run it live
+
+Keep the cockpit as the audience's primary screen. GitHub is where the presenter
+performs human decisions; Cloud Activity is where deployment intent is recorded.
+Warmed images normally fit this route, but never rush or bypass an approval to
+meet the clock.
+
+### Open alongside the cockpit
 
 - Project: <https://github.com/users/mpuig/projects/4>
 - Repository issues: <https://github.com/mpuig/barista-factory-demo/issues>
 - Pull requests: <https://github.com/mpuig/barista-factory-demo/pulls>
-- Controller health: <https://github-factory.beta.barista.sh/healthz>
 - Tenant activity: <https://beta.barista.sh/app/activity>
 
 The Project and Cloud activity stream are projections. SQLite controller state
-is authoritative.
-Manually moving a card never approves or releases work.
+is authoritative. Manually moving a card never approves or releases work.
 
-## 1. Start with an incomplete brief
+## 1. Launch one reviewed scenario
 
-Create a repository issue with:
+In the unlocked cockpit select **Launch scenario** once. The controller creates
+or reuses one issue with the fixed deployment-status title, incomplete brief,
+and inert scenario marker. Double-clicks, retries, and page reloads converge on
+the current durable scenario rather than intending another root issue.
 
-**Title**
-
-```text
-Build a deployment status board
-```
-
-**Body**
-
-```text
-[barista:product-program]
-[barista:needs-input]
-
-Build a small deployment status product that we can run as one container.
-```
-
-GitHub should receive `202`. The issue appears in Project #4 while a fresh
-Factory run starts isolated triage at an exact `main` commit.
+The cockpit moves to **Brief** and links the exact issue while a fresh Factory
+run starts isolated triage at an exact `main` commit. Do not manually create a
+second root issue.
 
 ## 2. Clarify, do not resume
 
@@ -142,6 +178,34 @@ Refresh the stream and verify:
 - the action is no longer available; and
 - a failed terminal request, if demonstrated, remains immutable while retry uses
   a newly versioned action identity such as `deploy-2`.
+
+## 8. Reset only after settlement
+
+Return to the cockpit after deployment succeeds (or after the program honestly
+settles as failed/refused). Select **Reset** and confirm. Reset closes the root
+issue and clears the cockpit's current-scenario slot while preserving programs,
+events, pull requests, deployment provenance, and bounded failure evidence.
+Verify the cockpit returns to **Ready for a clean run**.
+
+Reset deliberately refuses active or waiting work. The current Host API does not
+provide a bounded generic cancellation guarantee, so the controller will not
+pretend that clearing a screen canceled an execution. Follow the cockpit's next
+action until the program settles, or switch to the retained-evidence route.
+
+## Recovery table
+
+| What you see | What it means | Safe response |
+| --- | --- | --- |
+| Launch returns the current scenario | A click/retry already intended work | Continue with the shown issue; do not create another |
+| Brief asks for input | The bounded attempt ended, not paused | Post the reviewed clarification once |
+| A feature says blocked | Its approved dependency has not merged | Do not move the Project card to force it |
+| Reset is disabled or returns active | Work is not terminal | Complete the displayed human action or retain failure evidence |
+| A public app is waking | The session was paused | Leave the page open; bounded automatic retry will settle |
+| Deployment action failed | Immutable intent settled as failed | Inspect evidence; use the newly versioned retry action |
+| Cockpit says disconnected | Read-state polling failed | Keep GitHub tabs open, check controller health, and use retained evidence |
+
+After any route, finish with controller, Cloud, and deployed-product health
+checks and verify zero disposable sessions for the managed acceptance tenant.
 
 ## Presenter notes
 

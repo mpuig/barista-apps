@@ -68,6 +68,8 @@ class ControllerConfig:
     host_api_token: str | None = None
     activity_deploy_command: tuple[str, ...] = ()
     activity_deploy_timeout_seconds: int = 1800
+    presenter_token: str | None = None
+    presenter_public_url: str | None = None
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.repository)
@@ -116,9 +118,7 @@ class ControllerConfig:
         if any(value is not None for value in activity_values) and not all(
             value is not None for value in activity_values
         ):
-            raise ValueError(
-                "activity endpoint and token must be configured together"
-            )
+            raise ValueError("activity endpoint and token must be configured together")
         for name, url in (
             ("activity endpoint", self.activity_endpoint),
             ("activity source URL", self.activity_source_url),
@@ -145,10 +145,39 @@ class ControllerConfig:
             raise ValueError(
                 "activity, forge, project, and Host API authorities must use separate credentials"
             )
-        if self.activity_deploy_command and not Path(
-            self.activity_deploy_command[0]
-        ).is_absolute():
-            raise ValueError("activity deploy command must use an absolute executable path")
+        if self.presenter_token is not None:
+            if len(self.presenter_token.encode("utf-8")) < 32:
+                raise ValueError("presenter token must contain at least 32 bytes")
+            if self.presenter_token in {
+                self.webhook_secret,
+                self.github_token,
+                self.github_project_token,
+                self.activity_token,
+                self.host_api_token,
+            }:
+                raise ValueError("presenter authority must use a separate credential")
+        if self.presenter_public_url is not None:
+            presenter_url = urlparse(self.presenter_public_url)
+            if (
+                presenter_url.scheme != "https"
+                or not presenter_url.hostname
+                or presenter_url.username
+                or presenter_url.password
+                or presenter_url.path
+                or presenter_url.query
+                or presenter_url.fragment
+                or self.presenter_public_url != f"https://{presenter_url.netloc}"
+            ):
+                raise ValueError(
+                    "presenter public URL must be canonical credential-free HTTPS"
+                )
+        if (
+            self.activity_deploy_command
+            and not Path(self.activity_deploy_command[0]).is_absolute()
+        ):
+            raise ValueError(
+                "activity deploy command must use an absolute executable path"
+            )
         if any(not item or len(item) > 8192 for item in self.activity_deploy_command):
             raise ValueError("activity deploy command is invalid")
         if not (30 <= self.activity_deploy_timeout_seconds <= 3600):
@@ -287,6 +316,8 @@ class ControllerConfig:
             activity_deploy_timeout_seconds=int(
                 os.environ.get("BARISTA_ACTIVITY_DEPLOY_TIMEOUT_SECONDS", "1800")
             ),
+            presenter_token=os.environ.get("BARISTA_DEMO_PRESENTER_TOKEN") or None,
+            presenter_public_url=os.environ.get("BARISTA_DEMO_PUBLIC_URL") or None,
         )
 
     def public_document(self) -> dict:
@@ -311,6 +342,14 @@ class ControllerConfig:
                 "endpoint": self.activity_endpoint,
                 "source_url": self.activity_source_url,
                 "deploy_enabled": self.activity_deploy_enabled,
+            },
+            "presenter": {
+                "enabled": self.presenter_token is not None,
+                "url": (
+                    f"{self.presenter_public_url}/presenter"
+                    if self.presenter_public_url
+                    else None
+                ),
             },
             "project": {
                 "enabled": self.project_enabled,

@@ -47,6 +47,7 @@ def provision(
     activity_endpoint: str,
     activity_source_url: str,
     activity_deploy_command: str | None,
+    presenter_token_file: Path,
     cp_host: str,
     ssh_key: Path,
     known_hosts: Path,
@@ -92,10 +93,35 @@ def provision(
             not isinstance(deploy_argv, list)
             or not deploy_argv
             or len(deploy_argv) > 128
-            or any(not isinstance(item, str) or not item or len(item) > 8192 for item in deploy_argv)
+            or any(
+                not isinstance(item, str) or not item or len(item) > 8192
+                for item in deploy_argv
+            )
             or not Path(deploy_argv[0]).is_absolute()
         ):
-            raise SystemExit("activity deploy command must be bounded absolute JSON argv")
+            raise SystemExit(
+                "activity deploy command must be bounded absolute JSON argv"
+            )
+    presenter_token_file = presenter_token_file.expanduser()
+    if presenter_token_file.exists():
+        presenter_token = _read_secret(presenter_token_file, "presenter token")
+    else:
+        presenter_token_file.parent.mkdir(parents=True, exist_ok=True)
+        presenter_token = secrets.token_hex(32)
+        descriptor = os.open(
+            presenter_token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(presenter_token + "\n")
+    if not re.fullmatch(r"[0-9a-f]{64}", presenter_token):
+        raise SystemExit("presenter token must be 32 bytes encoded as lowercase hex")
+    if presenter_token in {
+        github_token,
+        project_token,
+        activity_token,
+        host_token,
+    }:
+        raise SystemExit("presenter authority must use a separate credential")
     if project_number is not None and not 1 <= project_number <= 10000:
         raise SystemExit("project number is outside the supported bound")
     if project_owner_kind not in {"user", "organization"}:
@@ -124,6 +150,8 @@ def provision(
         _environment_line("BARISTA_GITHUB_BASE_REF", "main"),
         _environment_line("BARISTA_HOST_API_ENDPOINT", "https://beta.barista.sh"),
         _environment_line("BARISTA_HOST_API_TOKEN", host_token),
+        _environment_line("BARISTA_DEMO_PRESENTER_TOKEN", presenter_token),
+        _environment_line("BARISTA_DEMO_PUBLIC_URL", public_url.rstrip("/")),
     ]
     if activity_token is not None:
         environment_lines.extend(
@@ -205,6 +233,9 @@ def provision(
     print(
         f"webhook secret retained at {webhook_secret_file}; its value was not printed"
     )
+    print(
+        f"presenter token retained at {presenter_token_file}; its value was not printed"
+    )
 
 
 def main() -> int:
@@ -230,6 +261,11 @@ def main() -> int:
         "--activity-source-url", default="https://github-factory.beta.barista.sh"
     )
     parser.add_argument("--activity-deploy-command")
+    parser.add_argument(
+        "--presenter-token-file",
+        type=Path,
+        default=Path.home() / ".config/barista/github-factory-presenter-token",
+    )
     parser.add_argument(
         "--project-owner-kind", choices=("user", "organization"), default="user"
     )

@@ -171,6 +171,16 @@ class DeliveryStore:
                 updated_at INTEGER NOT NULL,
                 FOREIGN KEY(program_id) REFERENCES programs(program_id)
             );
+            CREATE TABLE IF NOT EXISTS demo_scenarios (
+                idempotency_key TEXT PRIMARY KEY,
+                scenario_id TEXT NOT NULL,
+                issue_number INTEGER NOT NULL UNIQUE,
+                issue_uri TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL,
+                reset_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS ix_demo_scenarios_recent
+                ON demo_scenarios(created_at DESC);
             """
         )
         columns = {
@@ -862,7 +872,11 @@ class DeliveryStore:
             phase="waiting",
             summary="Factory published a draft change for independent human review.",
             links=[
-                {"rel": "pull-request", "label": "Feature pull request", "url": str(draft["uri"])}
+                {
+                    "rel": "pull-request",
+                    "label": "Feature pull request",
+                    "url": str(draft["uri"]),
+                }
             ],
             attributes={"head_commit": str(metadata["head_commit"])},
         )
@@ -998,7 +1012,9 @@ class DeliveryStore:
             ).fetchone()
             if existing is not None:
                 if tuple(existing)[:-1] != document[:-1]:
-                    raise ValueError("program event identity was reused with different content")
+                    raise ValueError(
+                        "program event identity was reused with different content"
+                    )
                 return
             self._connection.execute(
                 """INSERT INTO program_events
@@ -1046,6 +1062,113 @@ class DeliveryStore:
                 ).fetchall()
                 result.append(self._program_document(row, features))
         return result
+
+    def program_attempts(self, program_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT delivery_id, issue_number, issue_uri, status, run_name,
+                attempt, workflow_kind, feature_id, error, created_at, updated_at
+                FROM deliveries WHERE program_id = ?
+                ORDER BY created_at, delivery_id LIMIT 100""",
+                (program_id,),
+            ).fetchall()
+        return [
+            {
+                "delivery_id": row["delivery_id"],
+                "issue_number": int(row["issue_number"]),
+                "issue_uri": row["issue_uri"],
+                "status": row["status"],
+                "run_name": row["run_name"],
+                "attempt": int(row["attempt"]),
+                "workflow_kind": row["workflow_kind"],
+                "feature_id": row["feature_id"],
+                "error": row["error"],
+                "created_at": int(row["created_at"]),
+                "updated_at": int(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    def record_demo_scenario(
+        self,
+        *,
+        idempotency_key: str,
+        scenario_id: str,
+        issue_number: int,
+        issue_uri: str,
+    ) -> dict:
+        now = int(time.time())
+        with self._lock:
+            self._connection.execute(
+                """INSERT INTO demo_scenarios
+                (idempotency_key, scenario_id, issue_number, issue_uri, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(idempotency_key) DO NOTHING""",
+                (idempotency_key, scenario_id, issue_number, issue_uri, now),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM demo_scenarios WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("demo scenario write was lost")
+        if int(row["issue_number"]) != issue_number or row["issue_uri"] != issue_uri:
+            raise ValueError("demo scenario idempotency identity conflicts")
+        return self._demo_scenario_document(row)
+
+    def current_demo_scenario(self) -> dict | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM demo_scenarios WHERE reset_at IS NULL
+                ORDER BY created_at DESC LIMIT 1"""
+            ).fetchone()
+        return self._demo_scenario_document(row) if row is not None else None
+
+    def get_demo_scenario(self, idempotency_key: str) -> dict | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM demo_scenarios WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        return self._demo_scenario_document(row) if row is not None else None
+
+    def reset_demo_scenario(self, idempotency_key: str) -> dict:
+        now = int(time.time())
+        with self._lock:
+            cursor = self._connection.execute(
+                """UPDATE demo_scenarios SET reset_at = COALESCE(reset_at, ?)
+                WHERE idempotency_key = ?""",
+                (now, idempotency_key),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(idempotency_key)
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM demo_scenarios WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        assert row is not None
+        return self._demo_scenario_document(row)
+
+    def list_demo_scenarios(self) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM demo_scenarios ORDER BY created_at DESC LIMIT 20"
+            ).fetchall()
+        return [self._demo_scenario_document(row) for row in rows]
+
+    @staticmethod
+    def _demo_scenario_document(row: sqlite3.Row) -> dict:
+        return {
+            "idempotency_key": row["idempotency_key"],
+            "scenario_id": row["scenario_id"],
+            "issue_number": int(row["issue_number"]),
+            "issue_uri": row["issue_uri"],
+            "program_id": f"program-{int(row['issue_number'])}",
+            "created_at": int(row["created_at"]),
+            "reset_at": int(row["reset_at"]) if row["reset_at"] else None,
+        }
 
     def desire_activity(self, program_id: str, document: dict) -> dict:
         """Persist one canonical desired generic activity document.
@@ -1149,7 +1272,12 @@ class DeliveryStore:
                 """UPDATE activity_projections
                 SET last_error = ?, attempts = attempts + 1, updated_at = ?
                 WHERE program_id = ? AND content_digest = ?""",
-                (" ".join(str(message).split())[:1000], int(time.time()), program_id, digest),
+                (
+                    " ".join(str(message).split())[:1000],
+                    int(time.time()),
+                    program_id,
+                    digest,
+                ),
             )
             self._connection.commit()
 

@@ -9,6 +9,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -19,12 +20,14 @@ from barista_app_sdk.sensitive import (
     redact_text,
 )
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from .activity_projection import ActivityPublisher, DeploymentRunner, program_activity
 from .config import ControllerConfig
 from .executor import FactoryRunExecutor
 from .program import GitHubProgramForge, ProgramRunExecutor
+from .presenter import PresenterService, presenter_authorized, presenter_html
 from .projects import GitHubProjector, Projector
 from .store import Claim, DeliveryStore
 
@@ -32,6 +35,12 @@ _DELIVERY_ID = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 _QUESTION_MARKER = "<!-- barista-factory-question:"
 _PROGRAM_MARKER = "[barista:product-program]"
 _FEATURE_MARKER = "<!-- barista-program-feature:v1 "
+
+
+class PresenterAction(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    idempotency_key: str = Field(min_length=8, max_length=64)
 
 
 class DemoController:
@@ -460,9 +469,7 @@ class DemoController:
                 target["content_digest"],
             )
 
-    def _publish_activity(
-        self, program_id: str, document: dict, digest: str
-    ) -> None:
+    def _publish_activity(self, program_id: str, document: dict, digest: str) -> None:
         assert self.activity_publisher is not None
         try:
             self.activity_publisher.publish(program_id, document)
@@ -680,6 +687,18 @@ def create_app(
         title="Barista GitHub Factory demo", version="0.1.0", lifespan=lifespan
     )
     app.state.controller = service
+    presenter = PresenterService(service)
+
+    def require_presenter(request: Request) -> None:
+        authorization = request.headers.get("authorization", "")
+        if len(authorization) > 256 or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401, detail="presenter authorization required"
+            )
+        if not presenter_authorized(selected.presenter_token, authorization[7:]):
+            raise HTTPException(
+                status_code=401, detail="presenter authorization required"
+            )
 
     @app.get("/healthz")
     def health() -> dict:
@@ -695,6 +714,49 @@ def create_app(
             "activity": selected.public_document()["activity"],
             "project": selected.public_document()["project"],
         }
+
+    @app.get("/presenter", response_class=HTMLResponse)
+    def presenter_page() -> HTMLResponse:
+        nonce = secrets.token_urlsafe(18)
+        return HTMLResponse(
+            presenter_html(nonce),
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    "default-src 'none'; base-uri 'none'; form-action 'self'; "
+                    f"style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; "
+                    "connect-src 'self'; frame-ancestors 'none'"
+                ),
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+            },
+        )
+
+    @app.get("/presenter/api/state")
+    def presenter_state() -> JSONResponse:
+        return JSONResponse(
+            presenter.state(),
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.post("/presenter/api/scenarios/deployment-status/launch")
+    def presenter_launch(action: PresenterAction, request: Request) -> JSONResponse:
+        require_presenter(request)
+        result = presenter.launch(action.idempotency_key)
+        return JSONResponse(
+            result,
+            status_code=201 if result["created"] else 200,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/presenter/api/scenarios/reset")
+    def presenter_reset(action: PresenterAction, request: Request) -> JSONResponse:
+        require_presenter(request)
+        return JSONResponse(
+            presenter.reset(action.idempotency_key),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/runs/{delivery_id}")
     def run_status(delivery_id: str) -> dict:
