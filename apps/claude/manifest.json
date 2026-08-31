@@ -1,13 +1,13 @@
 {
   "schema_version": "v1alpha1",
   "name": "claude",
-  "version": "0.1.0",
+  "version": "2.1.251",
   "description": "Claude Code as a portable Barista app.",
   "workload": {
-    "image": "ghcr.io/mpuig/barista-claude:0.1.0",
-    "digest": "sha256:56b5c95cec3a1d051216a95892829014a64f94f06036daf7951dad2c63a89af4",
+    "image": "ghcr.io/mpuig/barista-claude:2.1.251",
+    "digest": "sha256:7088e81617f0243f8718449240d12439261c588904ddf8ecff1603e8fc929328",
     "architectures": ["aarch64", "x86_64"],
-    "entrypoint": ["/usr/local/bin/claude"],
+    "entrypoint": ["/usr/bin/sleep", "infinity"],
     "working_dir": "/work",
     "readiness": { "type": "none" }
   },

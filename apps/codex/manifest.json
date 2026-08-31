@@ -1,13 +1,13 @@
 {
   "schema_version": "v1alpha1",
   "name": "codex",
-  "version": "0.1.0",
+  "version": "0.151.0",
   "description": "Codex CLI as a portable Barista app.",
   "workload": {
-    "image": "ghcr.io/mpuig/barista-codex:0.1.0",
-    "digest": "sha256:84b4384eb00cabb157e14d2ddba857cc40f13b3ccc66df4a3f1d9e2d56abfb7a",
+    "image": "ghcr.io/mpuig/barista-codex:0.151.0",
+    "digest": "sha256:5157e3dcbaafc11876b51a5638a65dc23f396e4234502f0f8d105d3767e16726",
     "architectures": ["aarch64", "x86_64"],
-    "entrypoint": ["/usr/local/bin/codex"],
+    "entrypoint": ["/usr/bin/sleep", "infinity"],
     "working_dir": "/work",
     "readiness": { "type": "none" }
   },

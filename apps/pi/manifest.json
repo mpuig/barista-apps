@@ -1,13 +1,13 @@
 {
   "schema_version": "v1alpha1",
   "name": "pi",
-  "version": "0.1.0",
+  "version": "0.73.1",
   "description": "The Pi coding agent as a portable Barista app.",
   "workload": {
-    "image": "ghcr.io/mpuig/barista-pi:0.1.0",
-    "digest": "sha256:40c81292467a4fe1b6645672b41e1004decce68279a9efcf68523466d83196d0",
+    "image": "ghcr.io/mpuig/barista-pi:0.73.1",
+    "digest": "sha256:867af9900c3bc0c44662de5b84d474684f18b0355156bd21cc1aff00f32814e4",
     "architectures": ["aarch64", "x86_64"],
-    "entrypoint": ["/usr/local/bin/pi"],
+    "entrypoint": ["/usr/bin/sleep", "infinity"],
     "working_dir": "/work",
     "readiness": { "type": "none" }
   },
@@ -20,7 +20,7 @@
   "permissions": {
     "actions": ["session.exec", "session.events", "artifact.write"],
     "secrets": [
-      { "name": "MODEL_API_KEY", "ref": "secret://model-provider/api-key" }
+      { "name": "ANTHROPIC_API_KEY", "ref": "secret://anthropic/api-key" }
     ],
     "artifacts": { "write": true }
   },
