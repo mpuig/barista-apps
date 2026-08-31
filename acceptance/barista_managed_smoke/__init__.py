@@ -1,10 +1,10 @@
 """One bounded release-gate command for managed Barista demos.
 
 The default profile proves generic lifecycle and a dependency-gated Factory
-mission through the public Host API. The model profile additionally runs
-operator-configured Claude/Pi/Codex apps without transporting model credentials:
-those credentials remain provider-resolved secret references in each installed
-app manifest.
+mission through the public Host API. The preflight profile warms configured
+Claude/Pi/Codex apps without model spend; the model profile performs explicit
+inference. Neither transports model credentials: those remain provider-resolved
+secret references in each installed app manifest.
 """
 
 from __future__ import annotations
@@ -162,7 +162,9 @@ def _headers(token: str) -> dict[str, str]:
 
 
 def _events(client: httpx.Client, session: str) -> list[dict[str, Any]]:
-    response = client.get(f"{BASE}/sessions/{session}/events", params={"max_events": 300})
+    response = client.get(
+        f"{BASE}/sessions/{session}/events", params={"max_events": 300}
+    )
     response.raise_for_status()
     events: list[dict[str, Any]] = []
     for line in response.text.splitlines():
@@ -171,7 +173,9 @@ def _events(client: httpx.Client, session: str) -> list[dict[str, Any]]:
     return events
 
 
-def _wait_operation(client: httpx.Client, operation_id: str, timeout_s: float) -> dict[str, Any]:
+def _wait_operation(
+    client: httpx.Client, operation_id: str, timeout_s: float
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         response = client.get(f"{BASE}/operations/{operation_id}")
@@ -224,7 +228,9 @@ def _exec_marker(
     }
 
 
-def _agent_check(endpoint: str, token: str, check: dict[str, Any], run_id: str) -> dict[str, Any]:
+def _agent_check(
+    endpoint: str, token: str, check: dict[str, Any], run_id: str
+) -> dict[str, Any]:
     required = {"name", "app", "command", "expected"}
     if set(check) != required:
         raise ValueError("agent check fields must be name, app, command, expected")
@@ -238,7 +244,11 @@ def _agent_check(endpoint: str, token: str, check: dict[str, Any], run_id: str) 
         raise ValueError("agent check name has an invalid format")
     if not isinstance(app, str) or not 1 <= len(app) <= 214 or "\x00" in app:
         raise ValueError("agent app identity is empty or exceeds its bound")
-    if not isinstance(expected, str) or not 1 <= len(expected) <= 256 or "\x00" in expected:
+    if (
+        not isinstance(expected, str)
+        or not 1 <= len(expected) <= 256
+        or "\x00" in expected
+    ):
         raise ValueError("agent expected marker is empty or exceeds its bound")
     if (
         not isinstance(command, list)
@@ -299,8 +309,8 @@ def _agent_checks() -> list[dict[str, Any]]:
     raw = os.environ.get("BARISTA_MANAGED_SMOKE_AGENT_CHECKS", "")
     if not raw:
         raise ValueError(
-            "model profile requires BARISTA_MANAGED_SMOKE_AGENT_CHECKS; model credentials "
-            "must remain provider-side app secret references"
+            "preflight/model profiles require BARISTA_MANAGED_SMOKE_AGENT_CHECKS; model "
+            "credentials must remain provider-side app secret references"
         )
     if len(raw.encode()) > MAX_AGENT_CONFIG_BYTES:
         raise ValueError("agent check configuration exceeds 64 KiB")
@@ -314,7 +324,11 @@ def _agent_checks() -> list[dict[str, Any]]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="barista-managed-smoke")
-    parser.add_argument("--profile", choices=("default", "model", "slow"), default="default")
+    parser.add_argument(
+        "--profile",
+        choices=("default", "preflight", "model", "slow"),
+        default="default",
+    )
     parser.add_argument("--check-url", action="append", default=[], metavar="NAME=URL")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--timeout", type=float, default=900.0)
@@ -341,24 +355,30 @@ def main() -> int:
         endpoint = os.environ.get("BARISTA_HOST_API_ENDPOINT", "").strip()
         token = os.environ.get("BARISTA_HOST_API_TOKEN", "").strip()
         if not endpoint or not token:
-            raise ValueError("BARISTA_HOST_API_ENDPOINT and BARISTA_HOST_API_TOKEN are required")
+            raise ValueError(
+                "BARISTA_HOST_API_ENDPOINT and BARISTA_HOST_API_TOKEN are required"
+            )
         report.step(
             "managed-lifecycle",
             lambda: _pytest_step(
-                ["tests/test_managed_acceptance.py::test_managed_session_lifecycle_smoke"],
+                [
+                    "tests/test_managed_acceptance.py::test_managed_session_lifecycle_smoke"
+                ],
                 args.timeout,
             ),
         )
         report.step(
             "factory-dependency-mission",
             lambda: _pytest_step(
-                ["tests/test_managed_acceptance.py::test_a_mission_runs_with_the_coordinator_in_a_session"],
+                [
+                    "tests/test_managed_acceptance.py::test_a_mission_runs_with_the_coordinator_in_a_session"
+                ],
                 args.timeout,
             ),
         )
         for name, url in _url_checks(args.check_url):
             report.step(f"public-url:{name}", lambda n=name, u=url: _check_url(n, u))
-        if args.profile == "model":
+        if args.profile in {"preflight", "model"}:
             for check in _agent_checks():
                 report.step(
                     f"agent:{check['name']}",
