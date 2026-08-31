@@ -26,6 +26,23 @@ provider.
 No adapter puts harness-specific fields into the Host API or the manifest
 envelope; harness detail lives in the adapter and in namespaced metadata.
 
+## Workload image
+
+`Dockerfile` packages Codex CLI 0.151.0 on a digest-pinned
+multi-architecture Node base. It includes CA certificates, Git, and ripgrep,
+runs as the non-root `node` user, and keeps the session alive with a fixed inert
+entrypoint. Codex invocations run through Host API `Exec`; model credentials
+come only from the manifest's provider-resolved secret reference. Regional API
+routing, such as the EU OpenAI endpoint, is provider-side configuration rather
+than image-baked credential material.
+
+Build from the repository root and always publish both supported platforms:
+
+```sh
+docker buildx build -f apps/codex/Dockerfile \
+  --platform linux/amd64,linux/arm64 <publish arguments> .
+```
+
 ## Tests
 
 ```bash
