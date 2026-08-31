@@ -42,10 +42,38 @@ The image references are parameters because pull authority and immutable image
 identity belong to the provider under test. Never replace their digests with
 mutable tags.
 
+## Preflight profile
+
+Preflight is the no-spend rehearsal gate. It runs every default check, then
+materializes each configured immutable agent app, verifies its provider binding
+without printing it, checks the pinned CLI version, exercises pause/resume, and
+deletes the session. The first run may pull images; run it before—not during—a
+presentation.
+
+```sh
+export BARISTA_MANAGED_SMOKE_AGENT_CHECKS='[
+  {"name":"claude","app":"claude","command":["/bin/sh","-c","test -n \"$ANTHROPIC_API_KEY\" && claude --version"],"expected":"2.1.251"},
+  {"name":"pi","app":"pi","command":["/bin/sh","-c","test -n \"$ANTHROPIC_API_KEY\" && pi --version"],"expected":"0.73.1"},
+  {"name":"codex","app":"codex","command":["/bin/sh","-c","test -n \"$OPENAI_API_KEY\" && test \"$OPENAI_BASE_URL\" = \"https://eu.api.openai.com/v1\" && codex --version"],"expected":"0.151.0"}
+]'
+uv run barista-managed-smoke \
+  --profile preflight \
+  --check-url cloud=https://provider.example/healthz \
+  --check-url factory-controller=https://factory.example/healthz \
+  --check-url generated-app=https://generated.example/ \
+  --output preflight.json
+```
+
+The shell expands binding values only inside the provider-created workload. The
+configured argv contains environment names and a non-secret regional endpoint,
+never credential values. Passing preflight proves image acquisition, binding
+presence, version identity, and lifecycle readiness; it is not model-inference
+evidence.
+
 ## Model profile
 
-Model checks target already-installed portable apps. Configure non-secret app,
-argv, and expected-marker data:
+Model checks target already-installed portable apps. Replace the preflight
+configuration with non-secret inference argv and expected-marker data:
 
 ```sh
 export BARISTA_MANAGED_SMOKE_AGENT_CHECKS='[
@@ -87,7 +115,9 @@ is tail-bounded to 8 KiB. HTTP checks record status and sampled byte count; an
 HTTP 200 proves reachability, not product semantics.
 
 The command stops on the first failure and exits nonzero after writing the
-partial report. Successful test resources are deleted. Failed Factory evidence
+partial report. Profiles are explicit: `preflight` never substitutes for paid
+`model` evidence, and `model` never substitutes for the real-TTL `slow` gate.
+Successful test resources are deleted. Failed Factory evidence
 must follow the provider's bounded forensic-retention policy; the smoke format
 does not invent a provider-specific retention API.
 
