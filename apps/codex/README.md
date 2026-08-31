@@ -32,9 +32,13 @@ envelope; harness detail lives in the adapter and in namespaced metadata.
 multi-architecture Node base. It includes CA certificates, Git, and ripgrep,
 runs as the non-root `node` user, and keeps the session alive with a fixed inert
 entrypoint. Codex invocations run through Host API `Exec`; model credentials
-come only from the manifest's provider-resolved secret reference. Regional API
-routing, such as the EU OpenAI endpoint, is provider-side configuration rather
-than image-baked credential material.
+come only from the manifest's provider-resolved secret reference. Codex 0.151.0
+requires API-key login state, so managed non-interactive invocation pipes the
+provider-injected key to `codex login --with-api-key` over stdin before exec;
+the key never enters argv. Regional API routing is also provider-resolved. This
+CLI release receives it through the bounded `openai_base_url` invocation option
+because it does not consume `OPENAI_BASE_URL` directly. Neither value is baked
+into the image or stored in the manifest.
 
 Build from the repository root and always publish both supported platforms:
 
