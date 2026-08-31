@@ -270,6 +270,18 @@ def test_model_profile_requires_provider_side_app_configuration(
     assert smoke._agent_checks()[0]["app"] == "pi"
 
 
+def test_documented_preflight_probes_merge_cli_stderr_into_bounded_stdout() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    text = (repository / "docs" / "managed-acceptance.md").read_text()
+    raw = text.split("export BARISTA_MANAGED_SMOKE_AGENT_CHECKS='", 1)[1].split(
+        "'\n", 1
+    )[0]
+    checks = json.loads(raw)
+
+    assert [check["name"] for check in checks] == ["claude", "pi", "codex"]
+    assert all(check["command"][-1].endswith("--version 2>&1") for check in checks)
+
+
 def test_url_checks_require_named_http_urls() -> None:
     assert smoke._url_checks(["cloud=https://beta.example/healthz"]) == [
         ("cloud", "https://beta.example/healthz")
