@@ -79,8 +79,46 @@ arm64 execution verified them on the acceptance workstation. CA bundles were
 present. A generated non-production sentinel scan passed for all three images;
 no operator credential was used as scanner input.
 
-## Outstanding managed evidence
+## Managed model-profile replay
 
-The published apps still need installation with provider-side secret references
-and a green model-profile report. Publication alone is not model execution
-evidence.
+Cloud PR [#215](https://github.com/mpuig/barista-cloud/pull/215) added bounded,
+generic operator resolution for only the references declared by an installed
+manifest. Signed appliance sequence 5 deployed that reviewed implementation.
+The `managed-release-acceptance` tenant then installed the three immutable
+manifests. Anthropic/OpenAI API keys and Codex's EU endpoint remained
+provider-side bindings; the runner process removed model credential variables
+from its environment and supplied no credential value in configuration or
+argv.
+
+Two failed runs remain bounded diagnostic evidence:
+
+- `smoke-b536597f13c44704bdfafddea80f330b`: Claude and Pi passed, while Codex
+  failed readiness during its first background image pull. Cleanup deleted all
+  created sessions.
+- `smoke-fcffaeb252674f258a35d5f9a0e815bc`: Claude and Pi passed, while Codex
+  produced no marker because Codex 0.151.0 requires API-key login state rather
+  than consuming the injected environment variable directly. Cleanup again
+  deleted all created sessions.
+
+Apps PR [#68](https://github.com/mpuig/barista-apps/pull/68) reviewed the
+correct non-interactive boundary: the provider-injected key moves to
+`codex login --with-api-key` over stdin with login output suppressed, and the
+provider-resolved EU endpoint moves into Codex's bounded configuration option.
+Neither resolved value enters the configured argv, report, manifest, or image.
+
+Report `smoke-dd9c8170ee8b4d87b0a189c848b76744` passed from
+`2026-08-31T08:49:04Z` through `08:50:19Z`:
+
+| Step | Result | Evidence |
+|---|---|---|
+| Managed lifecycle | passed | readiness, exec, pause/resume, filesystem continuity, deletion |
+| Factory dependency mission | passed | fresh producer/consumer dependency transfer and independent checks |
+| Public URLs | passed | Cloud, Factory controller, and Program 21 returned HTTP 200 |
+| Claude 2.1.251 | passed | `CLAUDE_SMOKE_OK`, operation `op-01M1BG5B1NNQ1SVQWV27EW667F`, pause/resume |
+| Pi 0.73.1 | passed | `PI_SMOKE_OK`, operation `op-01M1BG5SMWJNAPFNPEW78AY84P`, pause/resume |
+| Codex 0.151.0 | passed | `CODEX_SMOKE_OK`, operation `op-01M1BG646QN5CEHP4DPE4DYES3`, pause/resume, EU endpoint |
+
+The report is retained at `/tmp/barista-managed-model-smoke-green.json` on the
+acceptance workstation. Its bounded content was scanned against the tenant
+token and both provider credentials with no match. The tenant session inventory
+was empty after the run.

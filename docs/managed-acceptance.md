@@ -105,7 +105,12 @@ dependency-gated Factory mission, Cloud health, Factory-controller health, and
 the Program 21 public application.
 
 Public multi-architecture Claude 2.1.251, Pi 0.73.1, and Codex 0.151.0 OCI
-indexes are now available from `ghcr.io/mpuig`; their registry-reported index
-and per-platform digests are recorded in the active change evidence. The model
-profile remains pending provider-side secret installation and a green managed
-run; publication alone is not model evidence.
+indexes are available from `ghcr.io/mpuig`; their registry-reported index and
+per-platform digests are recorded in the change evidence.
+
+After Cloud sequence 5 enabled generic operator-bound reference resolution,
+report `smoke-dd9c8170ee8b4d87b0a189c848b76744` passed the model profile. It
+proved the default lifecycle and Factory checks, all three public URLs, exact
+Claude/Pi/Codex markers, model-session pause/resume, and unconditional cleanup.
+The acceptance tenant had zero sessions afterward. The report was scanned
+against the tenant token and provider credentials with no match.
