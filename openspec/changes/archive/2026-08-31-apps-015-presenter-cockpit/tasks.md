@@ -6,4 +6,4 @@
 - [x] Build and test the responsive, accessible cockpit.
 - [x] Publish short and full step-by-step runbooks.
 - [x] Run integration, contract, supply-chain, and strict OpenSpec validation.
-- [ ] Deploy reviewed source and verify launch, cockpit, terminal reset, health, and cleanup on beta.
+- [x] Deploy reviewed source and verify launch, cockpit, terminal reset, health, and cleanup on beta.
