@@ -79,10 +79,12 @@ apps/
   story/
 integrations/
   github-factory-demo/ # signed trigger, durable programs, activity/deployment
+acceptance/             # offline acceptance + opt-in managed smoke release gate
 ```
 
 Each package is independently versioned; this is a monorepo of packages, not
-one privileged daemon.
+one privileged daemon. See the [managed demo smoke gate](docs/managed-acceptance.md)
+for the default, model, and slow managed release profiles.
 
 ## Relationship to the other Barista repositories
 
