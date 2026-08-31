@@ -1,8 +1,10 @@
 # GitHub Factory controller
 
-For the complete clarification → business requirements document (BRD) approval
-→ dependency-gated features → assembled-product acceptance → explicit deployment
-presentation, use [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md).
+For presenter preflight, a 3–5 minute evidence tour, and the complete live
+clarification → business requirements document (BRD) approval → dependency-gated
+features → acceptance → deployment presentation, use
+[`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md). The read-only cockpit is served at
+`/presenter` on the controller URL.
 
 This integration is a persistent signed-webhook controller. Every accepted
 `issues/opened` event launches one ephemeral Factory App Run. Factory resolves
@@ -115,13 +117,24 @@ for `mpuig/barista-factory-demo` with:
 
 Save that token as one line in a mode-0600 file outside the repository. Do not
 paste it into argv, a shell assignment, setup state, or an App Run. Provision it
-with the existing Host API key and generated webhook secret over SSH stdin:
+with the existing Host API key, generated webhook secret, and a separate
+generated presenter token over SSH stdin:
 
 ```sh
 uv run python provision-beta.py \
   --repository https://github.com/mpuig/barista-factory-demo \
-  --github-token-file /secure/path/github-factory-runtime-token
+  --github-token-file /secure/path/github-factory-runtime-token \
+  --presenter-token-file /secure/path/github-factory-presenter-token
 ```
+
+The presenter token file is created mode `0600` when absent. Its value is not
+printed or copied into reports. The cockpit is publicly readable because it
+contains only bounded controller state from a public disposable repository;
+**Launch scenario** and **Reset** remain disabled until the presenter manually
+unlocks that browser tab with this distinct token. The browser keeps it in
+session storage only. The token grants no Host API, GitHub, Project, activity,
+or deployment authority directly; it authorizes only the controller's two fixed
+scenario transitions.
 
 Provisioning atomically writes `/etc/barista/github-factory-demo.env` as
 root:root mode 0600, restarts the unit, and verifies both loopback and public

@@ -83,6 +83,7 @@ def test_provisioning_sends_secret_environment_on_stdin_not_argv():
     assert "host_token_file" in text
     assert "webhook_secret_file" in text
     assert "project_token_file" in text
+    assert "presenter_token_file" in text
     assert (
         "github_token"
         not in text[text.index("remote = (") : text.index("subprocess.run([*ssh")]
@@ -94,6 +95,7 @@ def test_provisioning_sends_secret_environment_on_stdin_not_argv():
     assert "BARISTA_GITHUB_TOKEN=" not in text
     assert "BARISTA_GITHUB_PROJECT_TOKEN=" not in text
     assert "BARISTA_HOST_API_TOKEN=" not in text
+    assert "BARISTA_DEMO_PRESENTER_TOKEN=" not in text
     assert "chmod 600 /etc/barista/github-factory-demo.env.tmp" in text
 
 
