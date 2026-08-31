@@ -51,7 +51,7 @@ argv, and expected-marker data:
 export BARISTA_MANAGED_SMOKE_AGENT_CHECKS='[
   {"name":"claude","app":"claude","command":["claude","-p","Reply exactly CLAUDE_SMOKE_OK"],"expected":"CLAUDE_SMOKE_OK"},
   {"name":"pi","app":"pi","command":["pi","--print","Reply exactly PI_SMOKE_OK"],"expected":"PI_SMOKE_OK"},
-  {"name":"codex","app":"codex","command":["codex","exec","Reply exactly CODEX_SMOKE_OK"],"expected":"CODEX_SMOKE_OK"}
+  {"name":"codex","app":"codex","command":["/bin/sh","-c","printf %s \"$OPENAI_API_KEY\" | codex login --with-api-key >/dev/null 2>&1 && exec codex -c \"openai_base_url=$OPENAI_BASE_URL\" exec --skip-git-repo-check --sandbox read-only \"Reply exactly CODEX_SMOKE_OK\""],"expected":"CODEX_SMOKE_OK"}
 ]'
 uv run barista-managed-smoke --profile model --output model-smoke.json
 ```
@@ -60,9 +60,14 @@ Do not put Anthropic or OpenAI credentials in that JSON, argv, or caller
 provided environment. The installed manifests name provider-side secret
 references; the provider resolves those references into each app workload. A
 model check verifies the exact marker, pause/resume, and unconditional cleanup.
-Regional Codex installations may configure the EU OpenAI base URL inside the
-app/template; that endpoint is not a credential and still must not be supplied
-as a secret channel through the smoke command.
+Codex 0.151.0 does not treat the API-key environment variable as persisted CLI
+login state. The reviewed invocation above moves the provider-injected value to
+`codex login` over stdin, suppresses login output, and then replaces the shell;
+the value is never placed in argv or the report. The provider also resolves the
+EU base URL reference. The invocation expands that non-secret provider value
+into Codex's `openai_base_url` configuration because this CLI release does not
+honor `OPENAI_BASE_URL` directly. Neither resolved value belongs in the smoke
+configuration JSON.
 
 ## Slow profile
 
