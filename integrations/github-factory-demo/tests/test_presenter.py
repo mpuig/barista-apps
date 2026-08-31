@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from barista_github_factory_demo import (
     ControllerConfig,
@@ -110,6 +111,9 @@ def test_presenter_is_public_secret_free_and_strictly_protected(tmp_path: Path) 
         assert "Factory presenter" in page.text
         assert TOKEN not in page.text
         assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        nonce = re.search(r'<style nonce="([^"]+)">', page.text).group(1)
+        assert f"script-src 'nonce-{nonce}'; connect-src 'self'" in page.text
+        assert "unsafe-inline" not in page.text
         assert page.headers["cache-control"] == "no-store"
 
         state = client.get("/presenter/api/state")
