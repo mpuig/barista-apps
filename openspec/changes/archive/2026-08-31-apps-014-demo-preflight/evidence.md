@@ -45,3 +45,17 @@ token match. No model inference argv ran, so this is explicitly warm-up—not
 paid-model—evidence.
 
 Report: `/tmp/barista-managed-demo-preflight-green.json`.
+
+## Consecutive presentation rehearsals
+
+Two further fresh-session preflights ran without code changes or manual repair:
+
+- `smoke-7a0b4ecd7b75471080f23b76b8ec3384` — passed in 70 seconds;
+- `smoke-fb4c8eb057b84b4db47e51bf3b5cb96a` — passed in 73 seconds.
+
+Together with the 68-second first run, this is a three-run rehearsal series.
+Each run repeated the lifecycle and Factory checks, all three public health
+checks, and all three agent binding/version/pause/resume checks. The final
+tenant inventory was empty and all public endpoints still returned HTTP 200.
+Root-side scans of both additional reports again found zero operator-binding
+value matches.
