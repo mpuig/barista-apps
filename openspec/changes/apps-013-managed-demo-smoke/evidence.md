@@ -59,8 +59,28 @@ All test-created successful sessions were deleted. The report is retained at
 `/tmp/barista-managed-smoke-green.json` on the acceptance workstation and its
 run id is recorded in managed deployment provenance.
 
+## Published model workloads
+
+Reviewed source revision `9fd30d2f4f50a6d7378f29ee0d2979c4a9a554d7` produced three
+public OCI indexes. Anonymous registry reads reported the index and native
+manifest identities below; a local image id was not accepted as publication
+evidence.
+
+| App | OCI index | linux/amd64 manifest | linux/arm64 manifest |
+|---|---|---|---|
+| Claude 2.1.251 | `sha256:7088e81617f0243f8718449240d12439261c588904ddf8ecff1603e8fc929328` | `sha256:d26ac2afde3583a10d2d0047410524a95a8182c397dd64660d2ae4f2d91225b4` | `sha256:dbbca01d2b2d71adcc00b3abdc81c2b777dc7536d99e38604fe637aaf06a1af1` |
+| Pi 0.73.1 | `sha256:867af9900c3bc0c44662de5b84d474684f18b0355156bd21cc1aff00f32814e4` | `sha256:5ddb96449d32ad5e8734e779efd9da10d136e015acb1e26edb32deb683e369ab` | `sha256:51a21d27fec236d210f856f03681a5a93963b0d51eba13ccb8b9893c5e361ac9` |
+| Codex 0.151.0 | `sha256:5157e3dcbaafc11876b51a5638a65dc23f396e4234502f0f8d105d3767e16726` | `sha256:91a3f0172a341929ccf5af764e6c464dd498935da14ff4080ea03447dc6dd364` | `sha256:bc21ee435a6688ba0be66b5da93cdba6fb58f5766fede13e5ee93600fb92d823` |
+
+Both architecture configs identify the non-root `node` user, the fixed
+`/usr/bin/sleep infinity` entrypoint, and the reviewed source revision. Native
+amd64 pulls on the Hetzner node verified the exact CLI versions, and native
+arm64 execution verified them on the acceptance workstation. CA bundles were
+present. A generated non-production sentinel scan passed for all three images;
+no operator credential was used as scanner input.
+
 ## Outstanding managed evidence
 
-The model profile still requires immutable published Claude, Pi, and Codex
-images installed with provider-side secret references. That prerequisite was
-not weakened or bypassed.
+The published apps still need installation with provider-side secret references
+and a green model-profile report. Publication alone is not model execution
+evidence.
