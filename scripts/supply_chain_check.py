@@ -20,12 +20,13 @@ Runs offline. Exit non-zero on any violation.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DIGEST_OK = __import__("re").compile(r"^sha(256|512):[0-9a-f]{64,128}$")
+DIGEST_OK = re.compile(r"^sha(256|512):[0-9a-f]{64,128}$")
 
 problems: list[str] = []
 
@@ -61,6 +62,38 @@ def check_manifests() -> None:
             ref = secret.get("ref", "")
             if not ref.startswith(("secret://", "grant://", "ref://")):
                 problems.append(f"{rel}: secret {secret.get('name')!r} is not a reference: {ref!r}")
+
+
+def check_agent_images() -> None:
+    expected = {
+        "claude": ("@anthropic-ai/claude-code", "2.1.251"),
+        "pi": ("@mariozechner/pi-coding-agent", "0.73.1"),
+        "codex": ("@openai/codex", "0.151.0"),
+    }
+    pinned_base = re.compile(
+        r"^FROM [^\s]+@sha256:[0-9a-f]{64}$", re.MULTILINE
+    )
+    for app, (package, version) in expected.items():
+        path = REPO / "apps" / app / "Dockerfile"
+        rel = path.relative_to(REPO)
+        if not path.is_file():
+            problems.append(f"{rel}: missing publishable agent image")
+            continue
+        dockerfile = path.read_text()
+        required = {
+            "digest-pinned base image": pinned_base.search(dockerfile),
+            "exact harness version": f"{package}@{version}" in dockerfile,
+            "CA certificates": "ca-certificates" in dockerfile,
+            "non-root runtime": "USER node" in dockerfile,
+            "fixed session-safe entrypoint": '["/usr/bin/sleep", "infinity"]' in dockerfile,
+        }
+        for requirement, present in required.items():
+            if not present:
+                problems.append(f"{rel}: missing {requirement}")
+        if re.search(
+            r"(?im)^\s*(?:ARG|ENV)\s+.*(?:API_KEY|TOKEN|SECRET)", dockerfile
+        ):
+            problems.append(f"{rel}: credential-shaped build or environment input is forbidden")
 
 
 def check_packages() -> None:
@@ -128,6 +161,7 @@ def check_sdk_contract_copies() -> None:
 
 def main() -> int:
     check_manifests()
+    check_agent_images()
     check_packages()
     check_schema_determinism()
     check_sdk_contract_copies()

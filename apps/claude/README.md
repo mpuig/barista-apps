@@ -26,6 +26,21 @@ provider.
 No adapter puts harness-specific fields into the Host API or the manifest
 envelope; harness detail lives in the adapter and in namespaced metadata.
 
+## Workload image
+
+`Dockerfile` packages Claude Code 2.1.251 on a digest-pinned multi-architecture
+Node base. It includes CA certificates, Git, and ripgrep, runs as the non-root
+`node` user, and keeps the session alive with a fixed inert entrypoint. Claude
+invocations run through Host API `Exec`; model credentials come only from the
+manifest's provider-resolved secret reference.
+
+Build from the repository root and always publish both supported platforms:
+
+```sh
+docker buildx build -f apps/claude/Dockerfile \
+  --platform linux/amd64,linux/arm64 <publish arguments> .
+```
+
 ## Tests
 
 ```bash
