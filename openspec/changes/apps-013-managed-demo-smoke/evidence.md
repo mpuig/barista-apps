@@ -39,9 +39,28 @@ the skipped current check.
 |---|---|---|
 | Disable managed-skip refusal | `test_pytest_step_refuses_a_skipped_managed_check` | failed as required |
 
+## Green release-gate replay
+
+After Cloud sequence 4 became active, an operator created a distinct
+`managed-release-acceptance` tenant with the enterprise capability set and a
+mode-0600 one-time API-key file. The normal appliance-acceptance tenant and its
+plan were not changed. Discovery advertised exactly `grants.delegated` and
+`session.pause_resume`.
+
+Report `smoke-f580adf1d65b4e2894e4ba442a1ca9b3` then passed:
+
+- managed lifecycle and filesystem continuity: 11.71 seconds;
+- dependency-gated Factory mission: 27.27 seconds;
+- Cloud health: HTTP 200;
+- GitHub Factory controller health: HTTP 200; and
+- Program 21 generated application: HTTP 200.
+
+All test-created successful sessions were deleted. The report is retained at
+`/tmp/barista-managed-smoke-green.json` on the acceptance workstation and its
+run id is recorded in managed deployment provenance.
+
 ## Outstanding managed evidence
 
-A complete green default report requires an ordinary credential for an
-enterprise/acceptance tenant advertising `grants.delegated`. The model profile
-requires immutable published Claude, Pi, and Codex images installed with
-provider-side secret references. Neither prerequisite was weakened or bypassed.
+The model profile still requires immutable published Claude, Pi, and Codex
+images installed with provider-side secret references. That prerequisite was
+not weakened or bypassed.

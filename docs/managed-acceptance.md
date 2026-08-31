@@ -89,8 +89,13 @@ does not invent a provider-specific retention API.
 ## Current managed evidence
 
 The first run of the new command proved lifecycle continuity and all configured
-public URLs. Its Factory step refused green because the available
-`cloud-appliance-acceptance` tenant advertises only `session.pause_resume`, not
-`grants.delegated`. This is the intended skip-to-failure behavior. A previous
-fresh managed Factory replay after BAR-081 remains successful evidence, but it
-is not substituted for a current gate run.
+public URLs, but its Factory step skipped because the appliance-acceptance
+tenant does not advertise `grants.delegated`. The command initially translated
+that skip into green; its skip-to-failure regression test now prevents that.
+
+A later run used a distinct managed-release-acceptance tenant advertising
+`grants.delegated` and `session.pause_resume`. Report
+`smoke-f580adf1d65b4e2894e4ba442a1ca9b3` passed lifecycle continuity, the fresh
+dependency-gated Factory mission, Cloud health, Factory-controller health, and
+the Program 21 public application. The model profile remains pending immutable
+published agent images with provider-side secret references.
