@@ -245,7 +245,7 @@ def main() -> int:
     parser.add_argument(
         "--host-token-file",
         type=Path,
-        default=Path.home() / ".config/barista/key",
+        default=Path.home() / ".config/barista/cloud-appliance-key",
     )
     parser.add_argument(
         "--webhook-secret-file",

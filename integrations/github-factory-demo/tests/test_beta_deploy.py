@@ -81,6 +81,7 @@ def test_provisioning_sends_secret_environment_on_stdin_not_argv():
     assert "input=environment" in text
     assert "github_token_file" in text
     assert "host_token_file" in text
+    assert '.config/barista/cloud-appliance-key"' in text
     assert "webhook_secret_file" in text
     assert "project_token_file" in text
     assert "presenter_token_file" in text
