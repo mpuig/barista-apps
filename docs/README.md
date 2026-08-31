@@ -13,6 +13,8 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
   reference-only secrets, least-privilege permissions, capabilities.
 - [Running typed app operations](app-runs.md) — canonical App Runs, lifecycle
   observation, verified results, detach, and cleanup.
+- [Managed demo smoke gate](managed-acceptance.md) — default, model, and slow
+  release profiles with bounded machine-readable evidence.
 - [Source and forge adapters](source-and-forge-adapters.md) — immutable Git
   acquisition, bounded objectives, patches, branches, and explicit draft delivery.
 - [GitHub Factory controller](../integrations/github-factory-demo/README.md) —
@@ -34,5 +36,5 @@ Manifest, Host API, conformance, local provider, SDK, and reference apps.
 | `apps/{pi,claude,codex}/` | Harness adapters |
 | `apps/{change-agent,factory,github-issue-triage,github-issue-worker,github-product-worker,lift,story}/` | Portable and internal apps |
 | `integrations/github-factory-demo/` | Signed GitHub controller, durable product programs, generic activity projection, and trusted deployment adapters |
-| `acceptance/` | Full offline acceptance flow (Cloud blocked) |
+| `acceptance/` | Offline acceptance plus the explicit managed demo smoke release gate |
 | `scripts/supply_chain_check.py` | Digest/reference/lock/schema-drift checks |

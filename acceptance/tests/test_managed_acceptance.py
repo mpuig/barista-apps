@@ -300,6 +300,53 @@ def _cleanup(client, sid: str, children: set[str]) -> None:
         _delete(client, session_id)
 
 
+def test_managed_session_lifecycle_smoke(client):
+    """Fast release gate: real guest readiness, exec, pause/resume, and cleanup."""
+    _coord_img, worker_img = _require_images()
+    _require_capabilities(client, "session.pause_resume")
+    app_name = "acc-smoke-worker"
+    manifest = {
+        "schema_version": "v1alpha1",
+        "name": app_name,
+        "version": "1.0.0",
+        "workload": {
+            **worker_img,
+            "architectures": ["aarch64", "x86_64"],
+            "entrypoint": ["/bin/sh", "-c", "sleep infinity"],
+            "working_dir": "/work",
+            "readiness": {"type": "none"},
+        },
+    }
+    installed = _install(client, manifest)
+    assert installed.status_code in (200, 201), installed.text
+    sid = "smoke" + uuid.uuid4().hex[:10]
+    created = client.post(
+        f"{BASE}/sessions",
+        json={"app": app_name, "name": sid},
+        headers={"Idempotency-Key": _key()},
+    )
+    assert created.status_code in (200, 201), created.text
+    try:
+        assert _wait_running(client, sid) in ("ready", "running")
+        marker = uuid.uuid4().hex
+        assert _exec_stdout(
+            client,
+            sid,
+            ["sh", "-c", f"printf %s {marker!r} > /work/smoke-marker; cat /work/smoke-marker"],
+        ) == marker.encode()
+        _wait_operation(
+            client,
+            client.post(f"{BASE}/sessions/{sid}/pause", headers={"Idempotency-Key": _key()}),
+        )
+        _wait_operation(
+            client,
+            client.post(f"{BASE}/sessions/{sid}/resume", headers={"Idempotency-Key": _key()}),
+        )
+        assert _exec_stdout(client, sid, ["cat", "/work/smoke-marker"]) == marker.encode()
+    finally:
+        _delete(client, sid)
+
+
 def test_a_mission_runs_with_the_coordinator_in_a_session(client):
     coord_img, worker_img = _require_images()
     mission_name = "acc" + uuid.uuid4().hex[:6]
