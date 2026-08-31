@@ -19,7 +19,8 @@
   "permissions": {
     "actions": ["session.exec", "session.events", "artifact.write"],
     "secrets": [
-      { "name": "OPENAI_API_KEY", "ref": "secret://openai/api-key" }
+      { "name": "OPENAI_API_KEY", "ref": "secret://openai/api-key" },
+      { "name": "OPENAI_BASE_URL", "ref": "ref://openai/base-url" }
     ],
     "artifacts": { "write": true }
   },
