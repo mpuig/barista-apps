@@ -296,6 +296,7 @@ PRESENTER_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'self'; style-src 'nonce-__NONCE__'; script-src 'nonce-__NONCE__'; connect-src 'self'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Factory presenter · Barista</title>
