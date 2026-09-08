@@ -57,3 +57,16 @@ The headline test runs the apps-001 §2 conformance suite against this provider
 over real HTTP **with Barista Cloud blocked**, proving it is a conformant
 provider. Others cover restart recovery, single-user auth, honest capability
 translation, and manifest rejection.
+
+## Retry recovery
+
+Use a stable `Idempotency-Key` when creating sessions or changing their lifecycle.
+The provider commits the original creation request and its node ULID before
+startup. If the response is lost, retry the same key: even after a provider
+restart, the retry addresses the same node instance. Pending requests include
+the supplied environment in the local provider database and are removed after
+startup is confirmed or the session is deleted.
+
+Each pause/resume operation has its own durable backend key. Retrying an
+uncertain operation reuses that key; a new pause/resume request uses a new one.
+The provider records the node's observed state when completing recovery.

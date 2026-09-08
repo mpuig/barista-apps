@@ -11,6 +11,7 @@ import base64
 import functools
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,7 @@ from starlette.routing import Route
 
 from . import errors
 from .capabilities import host_api_capabilities
+from .ids import node_id
 from .node import InstanceRequest, NodeClient, NodeNotFound, NodeUnsupported
 from .store import Store
 
@@ -152,7 +154,7 @@ class LocalProvider:
         if existing_id:
             session = self.store.get_session(existing_id)
             if session:
-                return JSONResponse(session, status_code=200)
+                return self._start_reserved(session, replay=True)
 
         app = self.store.get_app(app_name)
         if not app:
@@ -173,41 +175,42 @@ class LocalProvider:
         # starts, so the provider can inject it into the entrypoint without a
         # race in which the app calls back before its session exists.
         session_id = "sess-" + uuid.uuid4().hex[:16]
-        node_instance_id = "inst-" + uuid.uuid4().hex
-        session = self.store.create_session(
-            node_instance_id=node_instance_id,
-            app=app_name,
-            name=body.get("name"),
-            metadata=body.get("metadata"),
-            session_id=session_id,
-            state="creating",
-        )
-        start_cmd = list(workload["entrypoint"]) + list(body.get("args", []))
+        node_instance_id = node_id()
         supplied_env[APP_SESSION_ID_ENV] = session_id
-        try:
-            self.node.create_and_start(
-                InstanceRequest(
-                    instance_id=node_instance_id,
-                    image=workload["image"],
-                    digest=workload["digest"],
-                    arch=workload["architectures"][0],
-                    start_cmd=start_cmd,
-                    env=supplied_env,
-                    workdir=workload.get("working_dir"),
-                )
-            )
-        except NodeUnsupported as exc:
-            self.store.delete_session(session_id)
-            return errors.capability_unsupported(str(exc))
-        except Exception:
-            self.store.delete_session(session_id)
-            raise
+        node_request = InstanceRequest(
+            instance_id=node_instance_id,
+            image=workload["image"], digest=workload["digest"],
+            arch=workload["architectures"][0],
+            start_cmd=list(workload["entrypoint"]) + list(body.get("args", [])),
+            env=supplied_env, workdir=workload.get("working_dir"),
+        )
+        session = self.store.reserve_creation(
+            session_id, app_name, body.get("name"), body.get("metadata"),
+            asdict(node_request), idem,
+        )
+        return self._start_reserved(session, replay=session["id"] != session_id)
 
-        self.store.set_session_state(session_id, "running")
-        session = self.store.get_session(session_id)
-        self.store.append_event(session_id, "session.state_changed", {"state": "running"})
-        self.store.idempotent_record(idem, "ensure", session_id)
-        return JSONResponse(session, status_code=201)
+    def _start_reserved(self, session: dict, *, replay: bool) -> Response:
+        sid = session["id"]
+        pending = self.store.pending_creation(sid)
+        if pending is not None:
+            try:
+                # Reuse the original spec and node keys even if the app was
+                # reinstalled, the retry body changed, or this process restarted.
+                instance = self.node.create_and_start(InstanceRequest(**pending))
+            except NodeUnsupported as exc:
+                self.store.set_session_state(sid, "error")
+                return errors.capability_unsupported(str(exc))
+            except Exception:
+                # The node may have accepted the request. Keep its identity so
+                # retries reconcile the same instance rather than orphaning it.
+                return errors.error(
+                    503, "unavailable", "session.start_uncertain",
+                    "startup outcome is uncertain; retry with the same idempotency key",
+                    retryable=True,
+                )
+            self.store.finish_creation(sid, instance.state)
+        return JSONResponse(self.store.get_session(sid), status_code=200 if replay else 201)
 
     async def get_session(self, request: Request) -> Response:
         sid = request.path_params["sessionId"]
@@ -252,22 +255,34 @@ class LocalProvider:
         sid = request.path_params["sessionId"]
         idem = self._idem(request)
         replay = self._replay_operation(idem, verb)
-        if replay:
+        if replay and replay.get("session_id") != sid:
+            return errors.invalid_request("idempotency key belongs to another session")
+        if replay and replay["done"]:
             return JSONResponse(replay, status_code=202)
         if "session.pause_resume" not in self._caps:
             return errors.capability_unsupported("session.pause_resume is not supported by this provider")
         inst_id = self.store.node_instance_id(sid)
         if not inst_id:
             return errors.not_found("no such session")
+        op = self.store.create_operation(verb, sid, done=False, idem=idem)
+        if op.get("session_id") != sid:
+            return errors.invalid_request("idempotency key belongs to another session")
         try:
-            getattr(self.node, verb)(inst_id)
+            getattr(self.node, verb)(inst_id, idempotency_key=op["id"])
+            # A lost response may be retried after another lifecycle operation
+            # completed. The replay proves the old operation, not current state.
+            instance = self.node.get(inst_id)
+            if instance is None:
+                return errors.not_found("node instance no longer exists")
         except NodeUnsupported as exc:
             return errors.capability_unsupported(str(exc))
-        new_state = "paused" if verb == "pause" else "running"
-        self.store.set_session_state(sid, new_state)
-        op = self.store.create_operation(verb, sid, done=True)
-        self.store.append_event(sid, "session.state_changed", {"state": new_state}, op["id"])
-        self.store.idempotent_record(idem, verb, op["id"])
+        except Exception:
+            return errors.error(
+                503, "unavailable", "session.lifecycle_uncertain",
+                "lifecycle outcome is uncertain; retry with the same idempotency key",
+                retryable=True,
+            )
+        op = self.store.finish_lifecycle(op["id"], sid, instance.state)
         return JSONResponse(op, status_code=202)
 
     async def pause(self, request: Request) -> Response:

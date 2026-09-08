@@ -126,15 +126,15 @@ class GrpcNodeClient:
         )
         self._await_op(op)
 
-    def pause(self, instance_id: str) -> None:
+    def pause(self, instance_id: str, *, idempotency_key: Optional[str] = None) -> None:
         op = self._stub.PauseInstance(
-            self._pb.PauseInstanceRequest(instance_id=instance_id, idempotency_key=instance_id + ":pause")
+            self._pb.PauseInstanceRequest(instance_id=instance_id, idempotency_key=idempotency_key or uuid.uuid4().hex)
         )
         self._await_op(op)
 
-    def resume(self, instance_id: str) -> None:
+    def resume(self, instance_id: str, *, idempotency_key: Optional[str] = None) -> None:
         op = self._stub.ResumeInstance(
-            self._pb.ResumeInstanceRequest(instance_id=instance_id, idempotency_key=instance_id + ":resume")
+            self._pb.ResumeInstanceRequest(instance_id=instance_id, idempotency_key=idempotency_key or uuid.uuid4().hex)
         )
         self._await_op(op)
 

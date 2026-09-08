@@ -51,6 +51,9 @@ class FakeNodeClient:
         )
 
     def create_and_start(self, request: InstanceRequest) -> NodeInstance:
+        existing = self.get(request.instance_id)
+        if existing is not None:
+            return existing
         self._instances[request.instance_id] = {
             "state": "running",
             "ready": True,
@@ -73,12 +76,12 @@ class FakeNodeClient:
         self._instances.pop(instance_id, None)
         self._save()
 
-    def pause(self, instance_id: str) -> None:
+    def pause(self, instance_id: str, *, idempotency_key: Optional[str] = None) -> None:
         rec = self._require(instance_id)
         rec["state"] = "paused"
         self._save()
 
-    def resume(self, instance_id: str) -> None:
+    def resume(self, instance_id: str, *, idempotency_key: Optional[str] = None) -> None:
         rec = self._require(instance_id)
         rec["state"] = "running"
         self._save()

@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS events (
     data TEXT
 );
 CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, seq);
+CREATE TABLE IF NOT EXISTS pending_creations (
+    session_id TEXT PRIMARY KEY,
+    request TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -151,6 +155,41 @@ class Store:
         self._db.commit()
 
     # -- sessions --------------------------------------------------------- #
+    def reserve_creation(self, sid: str, app: str, name: Optional[str],
+                         metadata: Optional[dict], request: dict,
+                         idem: Optional[str]) -> dict:
+        """Commit the handle, original request, and retry identity before node I/O."""
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            existing = self.idempotent_lookup(idem, "ensure")
+            if existing:
+                return self.get_session(existing)
+            self._db.execute(
+                "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?)",
+                (sid, name, app, request["instance_id"], "creating", _now(),
+                 None, json.dumps(metadata or {})),
+            )
+            self._db.execute("INSERT INTO pending_creations VALUES (?,?)",
+                             (sid, json.dumps(request)))
+            if idem:
+                self._db.execute("INSERT INTO idempotency VALUES (?,?,?,?)",
+                                 (idem, "ensure", sid, _now()))
+        return self.get_session(sid)
+
+    def pending_creation(self, sid: str) -> Optional[dict]:
+        row = self._db.execute("SELECT request FROM pending_creations WHERE session_id=?",
+                               (sid,)).fetchone()
+        return json.loads(row["request"]) if row else None
+
+    def finish_creation(self, sid: str, state: str) -> None:
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            if self.pending_creation(sid) is None:
+                return
+            self._db.execute("UPDATE sessions SET state=? WHERE id=?", (state, sid))
+            self._db.execute("DELETE FROM pending_creations WHERE session_id=?", (sid,))
+            self._state_event(sid, state)
+
     def create_session(
         self,
         node_instance_id: str,
@@ -191,6 +230,7 @@ class Store:
 
     def delete_session(self, sid: str) -> None:
         self._db.execute("DELETE FROM sessions WHERE id=?", (sid,))
+        self._db.execute("DELETE FROM pending_creations WHERE session_id=?", (sid,))
         # The ensure key that minted this session must not resurrect a ghost.
         self._db.execute("DELETE FROM idempotency WHERE resource_id=?", (sid,))
         self._db.commit()
@@ -218,15 +258,40 @@ class Store:
 
     # -- operations ------------------------------------------------------- #
     def create_operation(self, kind: str, session_id: Optional[str], done: bool,
-                         result: Optional[dict] = None, last_cursor: Optional[str] = None) -> dict:
+                         result: Optional[dict] = None, last_cursor: Optional[str] = None,
+                         idem: Optional[str] = None) -> dict:
         op_id = "op-" + uuid.uuid4().hex[:16]
-        self._db.execute(
-            "INSERT INTO operations VALUES (?,?,?,?,?,?,?)",
-            (op_id, kind, 1 if done else 0, session_id,
-             json.dumps(result) if result is not None else None, None, last_cursor),
-        )
-        self._db.commit()
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            existing = self.idempotent_lookup(idem, kind)
+            if existing:
+                return self.get_operation(existing)
+            self._db.execute(
+                "INSERT INTO operations VALUES (?,?,?,?,?,?,?)",
+                (op_id, kind, 1 if done else 0, session_id,
+                 json.dumps(result) if result is not None else None, None, last_cursor),
+            )
+            if idem:
+                self._db.execute("INSERT INTO idempotency VALUES (?,?,?,?)",
+                                 (idem, kind, op_id, _now()))
         return self.get_operation(op_id)
+
+    def finish_lifecycle(self, op_id: str, sid: str, state: str) -> dict:
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            if self.get_operation(op_id)["done"]:
+                return self.get_operation(op_id)
+            self._db.execute("UPDATE sessions SET state=? WHERE id=?", (state, sid))
+            self._db.execute("UPDATE operations SET done=1 WHERE id=?", (op_id,))
+            self._state_event(sid, state, op_id)
+        return self.get_operation(op_id)
+
+    def _state_event(self, sid: str, state: str, op_id: Optional[str] = None) -> None:
+        """Append inside the caller's transaction, alongside the state it records."""
+        self._db.execute(
+            "INSERT INTO events (session_id, type, operation_id, time, data) VALUES (?,?,?,?,?)",
+            (sid, "session.state_changed", op_id, _now(), json.dumps({"state": state})),
+        )
 
     def get_operation(self, op_id: str) -> Optional[dict]:
         row = self._db.execute("SELECT * FROM operations WHERE id=?", (op_id,)).fetchone()
